@@ -2,6 +2,8 @@ package sme.backend.controller;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -24,16 +26,19 @@ public class SupplierController {
 
     private final SupplierRepository supplierRepository;
 
+    // ĐÃ NÂNG CẤP: Phân trang & Tìm kiếm phía Server
     @GetMapping
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
-    public ResponseEntity<ApiResponse<List<Supplier>>> getAll(
-            @RequestParam(required = false) String keyword) {
-        if (keyword != null && !keyword.isBlank()) {
-            return ResponseEntity.ok(ApiResponse.ok(
-                    supplierRepository.searchByName(keyword, PageRequest.of(0, 50)).getContent()));
-        }
+    public ResponseEntity<ApiResponse<PageResponse<Supplier>>> getAll(
+            @RequestParam(required = false) String keyword,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        
+        String kw = (keyword == null) ? "" : keyword.trim();
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
+        
         return ResponseEntity.ok(ApiResponse.ok(
-                supplierRepository.findByIsActiveTrueOrderByName()));
+                PageResponse.of(supplierRepository.searchAllByKeyword(kw, pageable))));
     }
 
     @GetMapping("/{id}")
@@ -48,7 +53,8 @@ public class SupplierController {
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
     public ResponseEntity<ApiResponse<Supplier>> create(@RequestBody Map<String, Object> body) {
         String taxCode = (String) body.get("taxCode");
-        if (taxCode != null && supplierRepository.existsByTaxCode(taxCode)) {
+
+        if (taxCode != null && !taxCode.isBlank() && supplierRepository.existsByTaxCode(taxCode)) {
             throw new BusinessException("DUPLICATE_TAX_CODE",
                     "Mã số thuế '" + taxCode + "' đã tồn tại");
         }
@@ -64,7 +70,9 @@ public class SupplierController {
                 .paymentTerms(body.get("paymentTerms") != null
                         ? Integer.parseInt(body.get("paymentTerms").toString()) : 30)
                 .isActive(true)
+                .notes((String) body.get("notes"))
                 .build();
+
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.created(supplierRepository.save(supplier)));
     }
@@ -75,13 +83,18 @@ public class SupplierController {
             @PathVariable UUID id, @RequestBody Map<String, Object> body) {
         Supplier s = supplierRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Supplier", id));
+
         if (body.containsKey("name"))          s.setName((String) body.get("name"));
         if (body.containsKey("contactPerson")) s.setContactPerson((String) body.get("contactPerson"));
         if (body.containsKey("phone"))         s.setPhone((String) body.get("phone"));
         if (body.containsKey("email"))         s.setEmail((String) body.get("email"));
+        if (body.containsKey("address"))       s.setAddress((String) body.get("address"));
         if (body.containsKey("bankAccount"))   s.setBankAccount((String) body.get("bankAccount"));
         if (body.containsKey("bankName"))      s.setBankName((String) body.get("bankName"));
+        if (body.containsKey("paymentTerms"))  s.setPaymentTerms(Integer.parseInt(body.get("paymentTerms").toString()));
         if (body.containsKey("notes"))         s.setNotes((String) body.get("notes"));
+        if (body.containsKey("isActive"))      s.setIsActive((Boolean) body.get("isActive"));
+
         return ResponseEntity.ok(ApiResponse.ok(supplierRepository.save(s)));
     }
 }

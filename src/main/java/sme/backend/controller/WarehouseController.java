@@ -1,16 +1,17 @@
 package sme.backend.controller;
 
-import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import sme.backend.dto.request.UpdateWarehouseRequest;
 import sme.backend.dto.response.ApiResponse;
 import sme.backend.entity.Warehouse;
 import sme.backend.exception.BusinessException;
 import sme.backend.exception.ResourceNotFoundException;
 import sme.backend.repository.WarehouseRepository;
+import org.springframework.data.domain.Sort;
 
 import java.util.List;
 import java.util.Map;
@@ -27,8 +28,9 @@ public class WarehouseController {
     @GetMapping
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
     public ResponseEntity<ApiResponse<List<Warehouse>>> getAll() {
+        // Lấy toàn bộ kho (kể cả đã khóa) để các phiếu giao dịch cũ vẫn map được tên
         return ResponseEntity.ok(ApiResponse.ok(
-                warehouseRepository.findByIsActiveTrueOrderByName()));
+                warehouseRepository.findAll(Sort.by("name"))));
     }
 
     /** GET /warehouses/{id} */
@@ -62,18 +64,27 @@ public class WarehouseController {
                 .body(ApiResponse.created(warehouseRepository.save(warehouse)));
     }
 
-    /** PUT /warehouses/{id} */
+    /** PUT /warehouses/{id} - ĐÃ SỬA: Sử dụng DTO để xử lý logic update Manager */
     @PutMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<Warehouse>> update(
             @PathVariable UUID id,
-            @RequestBody Map<String, String> body) {
+            @RequestBody UpdateWarehouseRequest request) {
+            
         Warehouse w = warehouseRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Warehouse", id));
-        if (body.containsKey("name"))         w.setName(body.get("name"));
-        if (body.containsKey("provinceCode")) w.setProvinceCode(body.get("provinceCode"));
-        if (body.containsKey("address"))      w.setAddress(body.get("address"));
-        if (body.containsKey("phone"))        w.setPhone(body.get("phone"));
+
+        // Cập nhật thông tin cơ bản nếu có truyền
+        if (request.getName() != null)         w.setName(request.getName());
+        if (request.getProvinceCode() != null) w.setProvinceCode(request.getProvinceCode());
+        if (request.getAddress() != null)      w.setAddress(request.getAddress());
+        if (request.getPhone() != null)        w.setPhone(request.getPhone());
+
+        // Cập nhật ManagerId (xử lý cả trường hợp gỡ Manager bằng null)
+        if (request.getHasManagerId() != null && request.getHasManagerId()) {
+            w.setManagerId(request.getManagerId());
+        }
+
         return ResponseEntity.ok(ApiResponse.ok(warehouseRepository.save(w)));
     }
 
@@ -84,6 +95,16 @@ public class WarehouseController {
         Warehouse w = warehouseRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Warehouse", id));
         w.setIsActive(false);
+        return ResponseEntity.ok(ApiResponse.ok(warehouseRepository.save(w)));
+    }
+
+    /** PATCH /warehouses/{id}/activate */
+    @PatchMapping("/{id}/activate")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<Warehouse>> activate(@PathVariable UUID id) {
+        Warehouse w = warehouseRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Warehouse", id));
+        w.setIsActive(true);
         return ResponseEntity.ok(ApiResponse.ok(warehouseRepository.save(w)));
     }
 }

@@ -81,17 +81,26 @@ spring:
   # ========================
   # SPRING AI - Dùng Gemini qua chuẩn OpenAI (Không cần thẻ Visa GCP)
   # ========================
+# ========================
+  # SPRING AI - Dùng Gemini qua chuẩn OpenAI
+  # ========================
+# ========================
+  # SPRING AI - Dùng Gemini qua chuẩn OpenAI (Không cần thẻ Visa GCP)
+  # ========================
   ai:
     openai:
-      api-key: AIzaSyDVK9VpAKJdNKePnCMo3ostJbHbmWinqZ8
+      api-key: AIzaSyBUhqqdRqNWYiipAmTh1XSpmix80o1gh1k  # (Lưu ý: Nên dùng biến môi trường ${GEMINI_API_KEY} cho bảo mật)
       base-url: https://generativelanguage.googleapis.com/v1beta/openai/
       chat:
+        completions-path: /chat/completions  # BẮT BUỘC THÊM: Ghi đè path mặc định của Spring AI
         options:
-          model: gemini-1.5-flash
-          temperature: 0.7
+          model: gemini-2.5-flash
+          temperature: 0.25
       embedding:
+        embeddings-path: /embeddings         # BẮT BUỘC THÊM: Ghi đè path mặc định của Spring AI
         options:
-          model: text-embedding-004
+          model: gemini-embedding-001 
+          dimensions: 768
     vectorstore:
       pgvector:
         index-type: HNSW
@@ -99,6 +108,10 @@ spring:
         dimensions: 768           # Gemini embedding dimensions
         initialize-schema: false  # Flyway quản lý
 
+cloudinary:
+  cloud-name: "dyttfnqzc"
+  api-key: "275886225423731"
+  api-secret: "0WFm1HzlZiyw16_beBd3c0SnwRk"
   # ========================
   # WEBSOCKET (STOMP)
   # ========================
@@ -138,6 +151,7 @@ app:
     low-stock-threshold: 10       # Cảnh báo tồn kho thấp
     dead-stock-days: 90           # Số ngày không bán = Hàng tồn chậm
     loyalty-points-per-vnd: 1000  # Cứ 1000đ = 1 điểm
+    loyalty-points-redeem-value: 100
     silver-threshold: 500         # 500 điểm = Silver
     gold-threshold: 2000          # 2000 điểm = Gold
 

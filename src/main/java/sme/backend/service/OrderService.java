@@ -79,7 +79,10 @@ public class OrderService {
         }
 
         // 2. Smart Order Routing → chọn kho tối ưu
-        UUID assignedWarehouseId = routeOrder(req.getProvinceCode(), req.getItems());
+        UUID assignedWarehouseId = req.getAssignedWarehouseId();
+        if (assignedWarehouseId == null) {
+            assignedWarehouseId = routeOrder(req.getProvinceCode(), req.getItems());
+        }
 
         // 3. Tạo Order
         Order.OrderType orderType = "BOPIS".equalsIgnoreCase(req.getType())
@@ -158,7 +161,6 @@ public class OrderService {
 
         // Khi chuyển sang SHIPPING → trừ kho thực
         if (status == Order.OrderStatus.SHIPPING && order.getAssignedWarehouseId() != null) {
-            // ĐÃ SỬA: Lấy assignedWarehouseId ra biến final để dùng an toàn trong Lambda
             final UUID wid = order.getAssignedWarehouseId();
             order.getItems().forEach(item ->
                     inventoryService.confirmOnlineShipment(
@@ -169,7 +171,6 @@ public class OrderService {
 
         // Khi hủy đơn → giải phóng reserved
         if (status == Order.OrderStatus.CANCELLED && order.getAssignedWarehouseId() != null) {
-            // ĐÃ SỬA: Lấy assignedWarehouseId ra biến final để dùng an toàn trong Lambda
             final UUID wid = order.getAssignedWarehouseId();
             order.getItems().forEach(item ->
                     inventoryService.releaseReservation(
@@ -177,6 +178,20 @@ public class OrderService {
                             item.getQuantity(), orderId, changedBy)
             );
             order.setCancelledReason(note);
+        }
+
+        // Khi hoàn trả đơn hàng → Cộng lại hàng vào kho vật lý
+        if (status == Order.OrderStatus.RETURNED && order.getAssignedWarehouseId() != null) {
+            final UUID wid = order.getAssignedWarehouseId();
+            order.getItems().forEach(item ->
+                    inventoryService.returnToStock(
+                            item.getProductId(), 
+                            wid,
+                            item.getQuantity(), 
+                            orderId, 
+                            "RETURNED_ORDER", 
+                            changedBy)
+            );
         }
 
         // Khi DELIVERED COD → ghi nhận doanh thu vào Cashbook
@@ -247,14 +262,11 @@ public class OrderService {
     // ─────────────────────────────────────────────────────────
     // QUERIES
     // ─────────────────────────────────────────────────────────
+    
+    // ĐÃ SỬA: Thêm tham số keyword và sử dụng mapToSimpleResponse
     @Transactional(readOnly = true)
-    public Page<OrderResponse> getOrders(UUID warehouseId, Order.OrderStatus status, Pageable pageable) {
-        if (warehouseId != null && status != null) {
-            return orderRepository
-                    .findByAssignedWarehouseIdAndStatusOrderByCreatedAtDesc(warehouseId, status, pageable)
-                    .map(this::mapToResponse);
-        }
-        return orderRepository.findAll(pageable).map(this::mapToResponse);
+    public Page<OrderResponse> getOrders(UUID warehouseId, Order.OrderStatus status, String keyword, Pageable pageable) {
+        return orderRepository.searchOrders(warehouseId, status, keyword, pageable).map(this::mapToSimpleResponse);
     }
 
     @Transactional(readOnly = true)
@@ -267,7 +279,7 @@ public class OrderService {
     @Transactional(readOnly = true)
     public List<OrderResponse> getPendingOrders(UUID warehouseId) {
         return orderRepository.findPendingOrdersByWarehouse(warehouseId)
-                .stream().map(this::mapToResponse).toList();
+                .stream().map(this::mapToSimpleResponse).toList();
     }
 
     // ─────────────────────────────────────────────────────────
@@ -277,40 +289,138 @@ public class OrderService {
         return "ORD-" + System.currentTimeMillis();
     }
 
-    public OrderResponse mapToResponse(Order order) {
-        List<OrderResponse.ItemResponse> items = order.getItems() == null ? List.of() :
-                order.getItems().stream()
-                        .map(i -> OrderResponse.ItemResponse.builder()
-                                .productId(i.getProductId())
-                                .quantity(i.getQuantity())
-                                .unitPrice(i.getUnitPrice())
-                                .subtotal(i.getSubtotal())
-                                .build())
-                        .toList();
+    // HÀM MỚI: Dùng cho màn hình danh sách (Không load items và statusHistory để tránh N+1 Query)
+    public OrderResponse mapToSimpleResponse(Order order) {
+        String custName = "Khách lẻ";
+        String custPhone = null;
+        if (order.getCustomerId() != null) {
+            var customer = customerRepository.findById(order.getCustomerId()).orElse(null);
+            if (customer != null) {
+                custName = customer.getFullName();
+                custPhone = customer.getPhoneNumber();
+            }
+        }
+
+        String warehouseName = null;
+        if (order.getAssignedWarehouseId() != null) {
+            warehouseName = warehouseRepository.findById(order.getAssignedWarehouseId())
+                    .map(Warehouse::getName).orElse(null);
+        }
 
         return OrderResponse.builder()
                 .id(order.getId())
                 .code(order.getCode())
                 .customerId(order.getCustomerId())
+                .customerName(custName)
+                .customerPhone(custPhone)
                 .assignedWarehouseId(order.getAssignedWarehouseId())
-                .status(order.getStatus().name())
-                .type(order.getType().name())
+                .assignedWarehouseName(warehouseName)
+                .status(order.getStatus() != null ? order.getStatus().name() : null)
+                .type(order.getType() != null ? order.getType().name() : null)
                 .shippingName(order.getShippingName())
                 .shippingPhone(order.getShippingPhone())
                 .shippingAddress(order.getShippingAddress())
                 .provinceCode(order.getProvinceCode())
                 .totalAmount(order.getTotalAmount())
                 .shippingFee(order.getShippingFee())
+                .discountAmount(order.getDiscountAmount())
                 .finalAmount(order.getFinalAmount())
                 .paymentMethod(order.getPaymentMethod())
-                .paymentStatus(order.getPaymentStatus().name())
+                .paymentStatus(order.getPaymentStatus() != null ? order.getPaymentStatus().name() : null)
                 .trackingCode(order.getTrackingCode())
                 .shippingProvider(order.getShippingProvider())
                 .codReconciled(order.getCodReconciled())
                 .note(order.getNote())
+                .cancelledReason(order.getCancelledReason())
+                .packedBy(order.getPackedBy())
+                .packedAt(order.getPackedAt())
+                .createdAt(order.getCreatedAt())
+                .updatedAt(order.getUpdatedAt())
+                .items(List.of()) // NGẮT N+1 QUERY
+                .statusHistory(List.of()) // NGẮT N+1 QUERY
+                .build();
+    }
+
+    // Hàm cũ: Dùng cho màn hình chi tiết
+    public OrderResponse mapToResponse(Order order) {
+        // 1. Fetch thông tin Khách hàng
+        String custName = "Khách lẻ";
+        String custPhone = null;
+        if (order.getCustomerId() != null) {
+            var customer = customerRepository.findById(order.getCustomerId()).orElse(null);
+            if (customer != null) {
+                custName = customer.getFullName();
+                custPhone = customer.getPhoneNumber();
+            }
+        }
+
+        // 2. Fetch thông tin Chi nhánh
+        String warehouseName = null;
+        if (order.getAssignedWarehouseId() != null) {
+            warehouseName = warehouseRepository.findById(order.getAssignedWarehouseId())
+                    .map(Warehouse::getName).orElse(null);
+        }
+
+        // 3. Map Items kèm thông tin Sản phẩm
+        List<OrderResponse.ItemResponse> items = order.getItems() == null ? List.of() :
+                order.getItems().stream()
+                        .map(i -> {
+                            var product = productRepository.findById(i.getProductId()).orElse(null);
+                            return OrderResponse.ItemResponse.builder()
+                                    .productId(i.getProductId())
+                                    .productName(product != null ? product.getName() : null)
+                                    .isbnBarcode(product != null ? product.getIsbnBarcode() : null)
+                                    .quantity(i.getQuantity())
+                                    .unitPrice(i.getUnitPrice())
+                                    .subtotal(i.getSubtotal())
+                                    .build();
+                        })
+                        .toList();
+
+        // 4. Map Status History
+        List<OrderResponse.StatusHistoryResponse> history = order.getStatusHistory() == null ? List.of() :
+                order.getStatusHistory().stream()
+                        .map(h -> OrderResponse.StatusHistoryResponse.builder()
+                                .oldStatus(h.getOldStatus())
+                                .newStatus(h.getNewStatus())
+                                .note(h.getNote())
+                                .changedBy(h.getChangedBy())
+                                .createdAt(h.getCreatedAt())
+                                .build())
+                        .toList();
+
+        // 5. Build full Response
+        return OrderResponse.builder()
+                .id(order.getId())
+                .code(order.getCode())
+                .customerId(order.getCustomerId())
+                .customerName(custName)
+                .customerPhone(custPhone)
+                .assignedWarehouseId(order.getAssignedWarehouseId())
+                .assignedWarehouseName(warehouseName)
+                .status(order.getStatus() != null ? order.getStatus().name() : null)
+                .type(order.getType() != null ? order.getType().name() : null)
+                .shippingName(order.getShippingName())
+                .shippingPhone(order.getShippingPhone())
+                .shippingAddress(order.getShippingAddress())
+                .provinceCode(order.getProvinceCode())
+                .totalAmount(order.getTotalAmount())
+                .shippingFee(order.getShippingFee())
+                .discountAmount(order.getDiscountAmount())
+                .finalAmount(order.getFinalAmount())
+                .paymentMethod(order.getPaymentMethod())
+                .paymentStatus(order.getPaymentStatus() != null ? order.getPaymentStatus().name() : null)
+                .trackingCode(order.getTrackingCode())
+                .shippingProvider(order.getShippingProvider())
+                .codReconciled(order.getCodReconciled())
+                .note(order.getNote())
+                .cancelledReason(order.getCancelledReason())
+                .packedBy(order.getPackedBy())
+                .packedAt(order.getPackedAt())
                 .createdAt(order.getCreatedAt())
                 .updatedAt(order.getUpdatedAt())
                 .items(items)
+                .statusHistory(history)
                 .build();
     }
 }

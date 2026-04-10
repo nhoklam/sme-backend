@@ -10,6 +10,10 @@ import java.util.UUID;
 @Data
 public class UpdateProductRequest {
     private UUID categoryId;
+    
+    // ĐÃ BỔ SUNG 2 TRƯỜNG NÀY (Hỗ trợ thay đổi hoặc gỡ Nhà cung cấp)
+    private UUID supplierId;
+    private Boolean hasSupplierId = false;
 
     @Size(max = 255)
     private String name;
@@ -30,4 +34,10 @@ public class UpdateProductRequest {
     private BigDecimal weight;
 
     private Boolean isActive;
+
+    // Custom setter để tự động kích hoạt cờ cập nhật Supplier
+    public void setSupplierId(UUID supplierId) {
+        this.supplierId = supplierId;
+        this.hasSupplierId = true;
+    }
 }

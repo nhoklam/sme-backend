@@ -2,22 +2,21 @@ package sme.backend.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.envers.Audited;
+import org.hibernate.envers.AuditTable;
 
 import java.time.Instant;
 import java.util.UUID;
 
 @Entity
 @Table(name = "users")
+@Audited
+@AuditTable("users_audit") // <-- THÊM DÒNG NÀY
 @Getter @Setter
 @NoArgsConstructor @AllArgsConstructor
 @Builder
 public class User extends BaseEntity {
 
-    /**
-     * Gắn nhân viên với 1 kho cụ thể.
-     * ADMIN có warehouse_id = NULL (toàn quyền).
-     * MANAGER/CASHIER bị giới hạn theo warehouse_id này.
-     */
     @Column(name = "warehouse_id")
     private UUID warehouseId;
 
@@ -36,12 +35,6 @@ public class User extends BaseEntity {
     @Column(length = 20)
     private String phone;
 
-    /**
-     * Role cố định theo RBAC.
-     * ROLE_ADMIN: Toàn quyền.
-     * ROLE_MANAGER: Quản lý kho được phân công.
-     * ROLE_CASHIER: Chỉ bán hàng POS tại kho được phân công.
-     */
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 50)
     private UserRole role;

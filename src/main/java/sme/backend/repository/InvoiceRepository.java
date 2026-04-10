@@ -11,6 +11,7 @@ import sme.backend.entity.Invoice;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -29,7 +30,6 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
     @Query("""
         SELECT DISTINCT i FROM Invoice i
         LEFT JOIN FETCH i.items
-        LEFT JOIN FETCH i.payments
         WHERE i.id = :id
         """)
     Optional<Invoice> findByIdWithDetails(@Param("id") UUID id);
@@ -41,42 +41,103 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
         """)
     BigDecimal sumRevenueByShift(@Param("shiftId") UUID shiftId);
 
-    // Báo cáo doanh thu theo khoảng thời gian và kho
+    // Báo cáo doanh thu theo NGÀY
     @Query(value = """
         SELECT
-            DATE_TRUNC(:period, i.created_at) AS period,
-            COUNT(i.id)                        AS invoice_count,
-            SUM(i.final_amount)                AS revenue,
-            SUM(ii.quantity * ii.mac_price)    AS cogs,
-            SUM(i.final_amount) - SUM(ii.quantity * ii.mac_price) AS gross_profit
+            DATE_TRUNC('day', i.created_at) AS period,
+            COUNT(DISTINCT i.id) AS invoice_count,
+            SUM(i.final_amount) AS revenue,
+            SUM(COALESCE(item_agg.total_cogs, 0)) AS cogs,
+            SUM(i.final_amount) - SUM(COALESCE(item_agg.total_cogs, 0)) AS gross_profit
         FROM invoices i
-        JOIN invoice_items ii ON ii.invoice_id = i.id
         JOIN shifts s ON s.id = i.shift_id
-        WHERE s.warehouse_id = :wid
+        LEFT JOIN (
+            SELECT invoice_id, SUM(quantity * mac_price) AS total_cogs
+            FROM invoice_items
+            GROUP BY invoice_id
+        ) item_agg ON item_agg.invoice_id = i.id
+        WHERE (CAST(:wid AS uuid) IS NULL OR s.warehouse_id = CAST(:wid AS uuid))
         AND i.type = 'SALE'
         AND i.created_at BETWEEN :from AND :to
-        GROUP BY DATE_TRUNC(:period, i.created_at)
+        GROUP BY DATE_TRUNC('day', i.created_at)
         ORDER BY period
         """, nativeQuery = true)
-    List<Object[]> getRevenueReport(@Param("wid")    UUID warehouseId,
-                                    @Param("from")   Instant from,
-                                    @Param("to")     Instant to,
-                                    @Param("period") String period);
+    List<Map<String, Object>> getRevenueReportDaily(@Param("wid")    UUID warehouseId,
+                                                    @Param("from")   Instant from,
+                                                    @Param("to")     Instant to);
 
-    // Báo cáo doanh thu ALL branches (Admin)
+    // Báo cáo doanh thu theo TUẦN
     @Query(value = """
         SELECT
-            w.name                             AS warehouse_name,
-            COUNT(DISTINCT i.id)               AS invoice_count,
-            SUM(i.final_amount)                AS revenue
+            DATE_TRUNC('week', i.created_at) AS period,
+            COUNT(DISTINCT i.id) AS invoice_count,
+            SUM(i.final_amount) AS revenue,
+            SUM(COALESCE(item_agg.total_cogs, 0)) AS cogs,
+            SUM(i.final_amount) - SUM(COALESCE(item_agg.total_cogs, 0)) AS gross_profit
         FROM invoices i
         JOIN shifts s ON s.id = i.shift_id
-        JOIN warehouses w ON w.id = s.warehouse_id
-        WHERE i.type = 'SALE'
+        LEFT JOIN (
+            SELECT invoice_id, SUM(quantity * mac_price) AS total_cogs
+            FROM invoice_items
+            GROUP BY invoice_id
+        ) item_agg ON item_agg.invoice_id = i.id
+        WHERE (CAST(:wid AS uuid) IS NULL OR s.warehouse_id = CAST(:wid AS uuid))
+        AND i.type = 'SALE'
         AND i.created_at BETWEEN :from AND :to
-        GROUP BY w.id, w.name
-        ORDER BY revenue DESC
+        GROUP BY DATE_TRUNC('week', i.created_at)
+        ORDER BY period
         """, nativeQuery = true)
-    List<Object[]> getRevenueByWarehouse(@Param("from") Instant from,
-                                         @Param("to")   Instant to);
+    List<Map<String, Object>> getRevenueReportWeekly(@Param("wid")    UUID warehouseId,
+                                                     @Param("from")   Instant from,
+                                                     @Param("to")     Instant to);
+
+    // Báo cáo doanh thu theo THÁNG
+    @Query(value = """
+        SELECT
+            DATE_TRUNC('month', i.created_at) AS period,
+            COUNT(DISTINCT i.id) AS invoice_count,
+            SUM(i.final_amount) AS revenue,
+            SUM(COALESCE(item_agg.total_cogs, 0)) AS cogs,
+            SUM(i.final_amount) - SUM(COALESCE(item_agg.total_cogs, 0)) AS gross_profit
+        FROM invoices i
+        JOIN shifts s ON s.id = i.shift_id
+        LEFT JOIN (
+            SELECT invoice_id, SUM(quantity * mac_price) AS total_cogs
+            FROM invoice_items
+            GROUP BY invoice_id
+        ) item_agg ON item_agg.invoice_id = i.id
+        WHERE (CAST(:wid AS uuid) IS NULL OR s.warehouse_id = CAST(:wid AS uuid))
+        AND i.type = 'SALE'
+        AND i.created_at BETWEEN :from AND :to
+        GROUP BY DATE_TRUNC('month', i.created_at)
+        ORDER BY period
+        """, nativeQuery = true)
+    List<Map<String, Object>> getRevenueReportMonthly(@Param("wid")    UUID warehouseId,
+                                                      @Param("from")   Instant from,
+                                                      @Param("to")     Instant to);
+
+    // Báo cáo doanh thu theo NĂM
+    @Query(value = """
+        SELECT
+            DATE_TRUNC('year', i.created_at) AS period,
+            COUNT(DISTINCT i.id) AS invoice_count,
+            SUM(i.final_amount) AS revenue,
+            SUM(COALESCE(item_agg.total_cogs, 0)) AS cogs,
+            SUM(i.final_amount) - SUM(COALESCE(item_agg.total_cogs, 0)) AS gross_profit
+        FROM invoices i
+        JOIN shifts s ON s.id = i.shift_id
+        LEFT JOIN (
+            SELECT invoice_id, SUM(quantity * mac_price) AS total_cogs
+            FROM invoice_items
+            GROUP BY invoice_id
+        ) item_agg ON item_agg.invoice_id = i.id
+        WHERE (CAST(:wid AS uuid) IS NULL OR s.warehouse_id = CAST(:wid AS uuid))
+        AND i.type = 'SALE'
+        AND i.created_at BETWEEN :from AND :to
+        GROUP BY DATE_TRUNC('year', i.created_at)
+        ORDER BY period
+        """, nativeQuery = true)
+    List<Map<String, Object>> getRevenueReportYearly(@Param("wid")    UUID warehouseId,
+                                                     @Param("from")   Instant from,
+                                                     @Param("to")     Instant to);
 }

@@ -10,9 +10,13 @@ import java.util.UUID;
 
 @Data @Builder
 public class OrderResponse {
+
     private UUID id;
     private String code;
     private UUID customerId;
+    private String cancelledReason;
+    private UUID packedBy;
+    private Instant packedAt;
     private String customerName;
     private String customerPhone;
     private UUID assignedWarehouseId;

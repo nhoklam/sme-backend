@@ -22,6 +22,7 @@ import sme.backend.repository.UserRepository;
 import sme.backend.repository.WarehouseRepository;
 import sme.backend.security.UserPrincipal;
 import sme.backend.security.jwt.JwtTokenProvider;
+import org.springframework.data.domain.Sort;
 
 import java.time.Instant;
 import java.util.List;
@@ -51,7 +52,6 @@ public class AuthService {
         SecurityContextHolder.getContext().setAuthentication(authentication);
         UserPrincipal principal = (UserPrincipal) authentication.getPrincipal();
 
-        // Cập nhật last_login_at
         userRepository.findByUsernameAndIsActiveTrue(principal.getUsername())
                 .ifPresent(u -> {
                     u.setLastLoginAt(Instant.now());
@@ -84,6 +84,7 @@ public class AuthService {
             throw new BusinessException("INVALID_TOKEN", "Refresh token không hợp lệ hoặc đã hết hạn");
         }
         String username = jwtTokenProvider.getUsernameFromToken(refreshToken);
+
         User user = userRepository.findByUsernameAndIsActiveTrue(username)
                 .orElseThrow(() -> new ResourceNotFoundException("User", username));
 
@@ -117,7 +118,6 @@ public class AuthService {
                     "Role không hợp lệ: " + req.getRole());
         }
 
-        // MANAGER / CASHIER bắt buộc có warehouseId
         if (role != User.UserRole.ROLE_ADMIN && req.getWarehouseId() == null) {
             throw new BusinessException("WAREHOUSE_REQUIRED",
                     "Manager và Cashier phải được gán vào một chi nhánh");
@@ -137,6 +137,38 @@ public class AuthService {
         user = userRepository.save(user);
         log.info("Created user: {} with role: {}", user.getUsername(), user.getRole());
         return mapToResponse(user);
+    }
+
+    @Transactional(readOnly = true)
+    public List<UserResponse> searchUsers(String keyword, String roleStr, UUID warehouseId) {
+        return userRepository.findAll(Sort.by("fullName")).stream()
+                .filter(u -> keyword == null || keyword.isBlank() ||
+                        u.getFullName().toLowerCase().contains(keyword.toLowerCase()) ||
+                        u.getUsername().toLowerCase().contains(keyword.toLowerCase()) ||
+                        (u.getEmail() != null && u.getEmail().toLowerCase().contains(keyword.toLowerCase())))
+                .filter(u -> roleStr == null || roleStr.isBlank() || u.getRole().name().equals(roleStr))
+                .filter(u -> warehouseId == null || warehouseId.equals(u.getWarehouseId()))
+                .map(this::mapToResponse)
+                .toList();
+    }
+
+    @Transactional
+    public UserResponse updateUser(UUID id, CreateUserRequest req) {
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("User", id));
+
+        if (req.getFullName() != null) user.setFullName(req.getFullName());
+        if (req.getEmail() != null) user.setEmail(req.getEmail());
+        if (req.getPhone() != null) user.setPhone(req.getPhone());
+        if (req.getRole() != null) user.setRole(User.UserRole.valueOf(req.getRole()));
+        
+        user.setWarehouseId(req.getWarehouseId());
+
+        if (req.getPassword() != null && !req.getPassword().isBlank()) {
+            user.setPasswordHash(passwordEncoder.encode(req.getPassword()));
+        }
+        
+        return mapToResponse(userRepository.save(user));
     }
 
     @Transactional
@@ -185,6 +217,7 @@ public class AuthService {
             warehouseName = warehouseRepository.findById(user.getWarehouseId())
                     .map(Warehouse::getName).orElse(null);
         }
+
         return UserResponse.builder()
                 .id(user.getId())
                 .username(user.getUsername())
@@ -196,6 +229,7 @@ public class AuthService {
                 .warehouseName(warehouseName)
                 .isActive(user.getIsActive())
                 .createdAt(user.getCreatedAt())
+                .lastLoginAt(user.getLastLoginAt())
                 .build();
     }
 }

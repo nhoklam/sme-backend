@@ -7,8 +7,10 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 import sme.backend.entity.Inventory;
+import sme.backend.dto.response.LowStockItem;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -17,10 +19,6 @@ public interface InventoryRepository extends JpaRepository<Inventory, UUID> {
 
     Optional<Inventory> findByProductIdAndWarehouseId(UUID productId, UUID warehouseId);
 
-    /**
-     * PESSIMISTIC_WRITE lock - dùng khi cần đảm bảo tuyệt đối
-     * (backup cho Optimistic Locking trong các trường hợp đặc biệt)
-     */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT i FROM Inventory i WHERE i.productId = :pid AND i.warehouseId = :wid")
     Optional<Inventory> findByProductAndWarehouseWithLock(
@@ -29,20 +27,40 @@ public interface InventoryRepository extends JpaRepository<Inventory, UUID> {
 
     List<Inventory> findByWarehouseId(UUID warehouseId);
 
-    // Lấy tồn kho của 1 sản phẩm trên tất cả các kho
     List<Inventory> findByProductId(UUID productId);
 
-    // Hàng tồn kho thấp cần cảnh báo
     @Query("""
         SELECT i FROM Inventory i
-        WHERE i.warehouseId = :wid
+        WHERE (CAST(:wid AS uuid) IS NULL OR i.warehouseId = CAST(:wid AS uuid))
         AND i.minQuantity > 0
         AND i.quantity <= i.minQuantity
         ORDER BY i.quantity ASC
         """)
     List<Inventory> findLowStockByWarehouse(@Param("wid") UUID warehouseId);
 
-    // Tổng tồn kho khả dụng trên tất cả kho (cho Web E-commerce)
+    // ĐÃ THÊM: Query lấy tồn kho thấp kèm tên sản phẩm
+    @Query("""
+        SELECT new sme.backend.dto.response.LowStockItem(
+            i.id,
+            i.productId,
+            p.name,
+            p.sku,
+            i.warehouseId,
+            w.name,
+            i.quantity,
+            i.minQuantity,
+            i.reservedQuantity
+        )
+        FROM Inventory i
+        JOIN sme.backend.entity.Product p ON p.id = i.productId
+        JOIN sme.backend.entity.Warehouse w ON w.id = i.warehouseId
+        WHERE (CAST(:wid AS uuid) IS NULL OR i.warehouseId = CAST(:wid AS uuid))
+        AND i.minQuantity > 0
+        AND i.quantity <= i.minQuantity
+        ORDER BY i.quantity ASC
+        """)
+    List<LowStockItem> findLowStockWithNameByWarehouse(@Param("wid") UUID warehouseId);
+
     @Query("""
         SELECT COALESCE(SUM(i.quantity - i.reservedQuantity), 0)
         FROM Inventory i
@@ -59,17 +77,17 @@ public interface InventoryRepository extends JpaRepository<Inventory, UUID> {
         FROM inventories i
         JOIN warehouses w ON w.id = i.warehouse_id
         JOIN products p ON p.id = i.product_id
-        WHERE (:wid IS NULL OR i.warehouse_id = :wid)
+        WHERE (CAST(:wid AS uuid) IS NULL OR i.warehouse_id = CAST(:wid AS uuid))
         GROUP BY w.id, w.name
         """, nativeQuery = true)
-    List<Object[]> getInventoryValueReport(@Param("wid") UUID warehouseId);
+    List<Map<String, Object>> getInventoryValueReport(@Param("wid") UUID warehouseId);
 
-    // Dead stock: sản phẩm chưa bán trong X ngày
+    // Dead stock: Hàng chậm luân chuyển
     @Query(value = """
-        SELECT i.*, p.name AS product_name, p.isbn_barcode
+        SELECT i.id, i.quantity, p.name AS product_name, p.isbn_barcode
         FROM inventories i
         JOIN products p ON p.id = i.product_id
-        WHERE i.warehouse_id = :wid
+        WHERE (CAST(:wid AS uuid) IS NULL OR i.warehouse_id = CAST(:wid AS uuid))
         AND i.quantity > 0
         AND NOT EXISTS (
             SELECT 1 FROM inventory_transactions t
@@ -79,10 +97,9 @@ public interface InventoryRepository extends JpaRepository<Inventory, UUID> {
         )
         ORDER BY i.quantity DESC
         """, nativeQuery = true)
-    List<Object[]> findDeadStockByWarehouse(@Param("wid") UUID warehouseId,
-                                            @Param("days") int days);
+    List<Map<String, Object>> findDeadStockByWarehouse(@Param("wid") UUID warehouseId,
+                                                       @Param("days") int days);
 
-    // Xóa cache sau khi cập nhật - check tồn kho cho tất cả sản phẩm trong danh sách
     @Query("""
         SELECT i FROM Inventory i
         WHERE i.warehouseId = :wid
@@ -91,4 +108,12 @@ public interface InventoryRepository extends JpaRepository<Inventory, UUID> {
     List<Inventory> findByWarehouseAndProducts(
             @Param("wid") UUID warehouseId,
             @Param("productIds") List<UUID> productIds);
+        
+    @Query("""
+        SELECT i.productId, COALESCE(SUM(i.quantity - i.reservedQuantity), 0)
+        FROM Inventory i
+        WHERE i.productId IN :productIds
+        GROUP BY i.productId
+        """)
+    List<Object[]> getBulkTotalAvailableQuantity(@Param("productIds") List<UUID> productIds);
 }

@@ -74,19 +74,24 @@ public class Customer extends BaseEntity {
      */
     public void deductPoints(int points) {
         if (this.loyaltyPoints < points) {
-            throw new IllegalStateException("Điểm tích lũy không đủ: hiện có " + this.loyaltyPoints);
+            throw new IllegalStateException("Điểm tích lũy không đủ.");
         }
         this.loyaltyPoints -= points;
-        updateTier();
+        // KHÔNG gọi updateTier() ở đây để tránh bị xuống hạng khi tiêu điểm
     }
 
+    /**
+     * Nâng hạng dựa trên Tổng chi tiêu (totalSpent)
+     */
     private void updateTier() {
-        if (this.loyaltyPoints >= 2000) {
-            this.customerTier = CustomerTier.GOLD;
-        } else if (this.loyaltyPoints >= 500) {
-            this.customerTier = CustomerTier.SILVER;
-        } else {
-            this.customerTier = CustomerTier.STANDARD;
-        }
+    // Giả sử mốc Silver là chi tiêu trên 5 triệu (tương ứng tích được 500 điểm nếu tỷ lệ tích là 1%)
+    BigDecimal silverThreshold = new BigDecimal("5000000"); 
+    BigDecimal goldThreshold = new BigDecimal("20000000");
+
+    if (this.totalSpent != null && this.totalSpent.compareTo(goldThreshold) >= 0) {
+        this.customerTier = CustomerTier.GOLD;
+    } else if (this.totalSpent != null && this.totalSpent.compareTo(silverThreshold) >= 0) {
+        this.customerTier = CustomerTier.SILVER;
     }
+}
 }

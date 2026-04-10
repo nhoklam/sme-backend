@@ -2,10 +2,13 @@ package sme.backend.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import sme.backend.dto.request.CreateCashbookEntryRequest;
 import sme.backend.dto.request.PaySupplierDebtRequest;
+import sme.backend.dto.response.SupplierDebtResponse;
 import sme.backend.entity.*;
 import sme.backend.exception.BusinessException;
 import sme.backend.exception.ResourceNotFoundException;
@@ -25,13 +28,10 @@ public class FinanceService {
     private final SupplierDebtRepository supplierDebtRepository;
     private final OrderRepository orderRepository;
     private final PurchaseOrderRepository purchaseOrderRepository;
+    private final WarehouseRepository warehouseRepository;
 
-    // ─────────────────────────────────────────────────────────
-    // SỔ QUỸ — Tạo Phiếu Thu/Chi thủ công (FIN-02)
-    // ─────────────────────────────────────────────────────────
     @Transactional
     public CashbookTransaction createManualEntry(CreateCashbookEntryRequest req, String createdBy) {
-
         CashbookTransaction.FundType fundType;
         CashbookTransaction.TransactionType txnType;
         try {
@@ -41,8 +41,9 @@ public class FinanceService {
             throw new BusinessException("INVALID_ENUM", "fundType hoặc transactionType không hợp lệ");
         }
 
-        // Lấy số dư trước khi ghi
-        BigDecimal balanceBefore = cashbookRepository.getCurrentBalance(req.getWarehouseId(), fundType);
+        BigDecimal balanceBefore = cashbookRepository.getCurrentBalanceByWarehouse(req.getWarehouseId(), fundType);
+        if (balanceBefore == null) balanceBefore = BigDecimal.ZERO;
+
         BigDecimal balanceAfter  = txnType == CashbookTransaction.TransactionType.IN
                 ? balanceBefore.add(req.getAmount())
                 : balanceBefore.subtract(req.getAmount());
@@ -67,12 +68,29 @@ public class FinanceService {
         return cashbookRepository.save(txn);
     }
 
-    // ─────────────────────────────────────────────────────────
-    // THANH TOÁN CÔNG NỢ NHÀ CUNG CẤP (FIN-04)
-    // ─────────────────────────────────────────────────────────
+    @Transactional(readOnly = true)
+    public Page<CashbookTransaction> searchCashbook(
+            UUID warehouseId, Instant from, Instant to, 
+            String fundTypeStr, String txnTypeStr, String keyword, Pageable pageable) {
+        
+        List<CashbookTransaction.FundType> fundTypes = ("ALL".equalsIgnoreCase(fundTypeStr) || fundTypeStr == null) 
+                ? List.of(CashbookTransaction.FundType.values()) 
+                : List.of(CashbookTransaction.FundType.valueOf(fundTypeStr.toUpperCase()));
+                
+        List<CashbookTransaction.TransactionType> txnTypes = ("ALL".equalsIgnoreCase(txnTypeStr) || txnTypeStr == null) 
+                ? List.of(CashbookTransaction.TransactionType.values()) 
+                : List.of(CashbookTransaction.TransactionType.valueOf(txnTypeStr.toUpperCase()));
+                
+        String kw = (keyword == null) ? "" : keyword.trim();
+
+        if (warehouseId == null) {
+            return cashbookRepository.searchCashbookAll(from, to, fundTypes, txnTypes, kw, pageable);
+        }
+        return cashbookRepository.searchCashbookByWarehouse(warehouseId, from, to, fundTypes, txnTypes, kw, pageable);
+    }
+
     @Transactional
     public SupplierDebt paySupplierDebt(PaySupplierDebtRequest req, String paidBy) {
-
         SupplierDebt debt = supplierDebtRepository.findById(req.getSupplierDebtId())
                 .orElseThrow(() -> new ResourceNotFoundException("SupplierDebt", req.getSupplierDebtId()));
 
@@ -80,11 +98,9 @@ public class FinanceService {
             throw new BusinessException("DEBT_ALREADY_PAID", "Công nợ này đã được thanh toán đầy đủ");
         }
 
-        // 1. Cập nhật công nợ (domain method validate)
         debt.pay(req.getAmount());
         supplierDebtRepository.save(debt);
 
-        // 2. Ghi Phiếu Chi ra Sổ quỹ
         CashbookTransaction.FundType fundType;
         try {
             fundType = CashbookTransaction.FundType.valueOf(req.getFundType().toUpperCase());
@@ -92,8 +108,10 @@ public class FinanceService {
             throw new BusinessException("INVALID_FUND_TYPE", "fundType không hợp lệ: " + req.getFundType());
         }
 
-        BigDecimal balanceBefore = cashbookRepository.getCurrentBalance(
-                getWarehouseFromDebt(debt), fundType);
+        UUID warehouseId = getWarehouseFromDebt(debt);
+        BigDecimal balanceBefore = cashbookRepository.getCurrentBalanceByWarehouse(warehouseId, fundType);
+        if (balanceBefore == null) balanceBefore = BigDecimal.ZERO;
+        
         BigDecimal balanceAfter = balanceBefore.subtract(req.getAmount());
 
         if (balanceAfter.compareTo(BigDecimal.ZERO) < 0) {
@@ -102,7 +120,7 @@ public class FinanceService {
         }
 
         CashbookTransaction paymentTxn = CashbookTransaction.builder()
-                .warehouseId(getWarehouseFromDebt(debt))
+                .warehouseId(warehouseId)
                 .fundType(fundType)
                 .transactionType(CashbookTransaction.TransactionType.OUT)
                 .referenceType("SUPPLIER_PAYMENT")
@@ -114,19 +132,14 @@ public class FinanceService {
                         : "Thanh toán công nợ NCC - PO: " + debt.getPurchaseOrderId())
                 .createdBy(paidBy)
                 .build();
-        cashbookRepository.save(paymentTxn);
 
-        log.info("Supplier debt paid: {} | amount: {} | status: {}",
-                debt.getId(), req.getAmount(), debt.getStatus());
+        cashbookRepository.save(paymentTxn);
         return debt;
     }
 
-    // ─────────────────────────────────────────────────────────
-    // ĐỐI SOÁT COD (FIN-05) — batch import từ Excel
-    // ─────────────────────────────────────────────────────────
     @Transactional
     public CodReconciliationResult reconcileCOD(List<CodReconciliationItem> items,
-                                                 UUID warehouseId, String reconciledBy) {
+                                                UUID warehouseId, String reconciledBy) {
         int matched = 0, notFound = 0;
         BigDecimal totalReceived = BigDecimal.ZERO;
         BigDecimal totalShippingFee = BigDecimal.ZERO;
@@ -140,12 +153,10 @@ public class FinanceService {
 
             if (Boolean.TRUE.equals(order.getCodReconciled())) continue;
 
-            // Đánh dấu đã đối soát
             order.setCodReconciled(true);
             order.setPaymentStatus(Order.PaymentStatus.PAID);
             orderRepository.save(order);
 
-            // Ghi Phiếu Thu (tiền COD từ đơn vị vận chuyển về)
             cashbookRepository.save(CashbookTransaction.builder()
                     .warehouseId(warehouseId)
                     .fundType(CashbookTransaction.FundType.BANK_112)
@@ -157,7 +168,6 @@ public class FinanceService {
                     .createdBy(reconciledBy)
                     .build());
 
-            // Ghi Phiếu Chi (phí vận chuyển)
             if (item.shippingFee().compareTo(BigDecimal.ZERO) > 0) {
                 cashbookRepository.save(CashbookTransaction.builder()
                         .warehouseId(warehouseId)
@@ -181,30 +191,67 @@ public class FinanceService {
                 totalReceived.subtract(totalShippingFee));
     }
 
-    // ─────────────────────────────────────────────────────────
-    // CASHBOOK REPORT (REP-04)
-    // ─────────────────────────────────────────────────────────
     @Transactional(readOnly = true)
     public BigDecimal getCurrentBalance(UUID warehouseId, String fundType) {
-        CashbookTransaction.FundType type =
-                CashbookTransaction.FundType.valueOf(fundType.toUpperCase());
-        return cashbookRepository.getCurrentBalance(warehouseId, type);
+        CashbookTransaction.FundType type = CashbookTransaction.FundType.valueOf(fundType.toUpperCase());
+        BigDecimal bal;
+        if (warehouseId == null) {
+            bal = cashbookRepository.getCurrentBalanceAll(type);
+        } else {
+            bal = cashbookRepository.getCurrentBalanceByWarehouse(warehouseId, type);
+        }
+        return bal != null ? bal : BigDecimal.ZERO;
     }
 
     @Transactional(readOnly = true)
-    public List<CashbookTransaction> getCashbookReport(UUID warehouseId,
-                                                        Instant from, Instant to) {
+    public List<CashbookTransaction> getCashbookReport(UUID warehouseId, Instant from, Instant to) {
+        if (warehouseId == null) {
+            return cashbookRepository.findAllByDateRange(from, to);
+        }
         return cashbookRepository.findByWarehouseAndDateRange(warehouseId, from, to);
     }
 
     @Transactional(readOnly = true)
-    public List<SupplierDebt> getOutstandingDebts() {
-        return supplierDebtRepository.findByStatus(SupplierDebt.DebtStatus.UNPAID);
+    public List<SupplierDebtResponse> getOutstandingDebts(UUID warehouseId) {
+        List<SupplierDebt> debts = supplierDebtRepository.findOutstandingDebtsByWarehouse(warehouseId);
+
+        return debts.stream().map(debt -> {
+            var po = purchaseOrderRepository.findById(debt.getPurchaseOrderId()).orElse(null);
+            String warehouseName = "Không rõ";
+            String poCode = null;
+            UUID wid = null;
+
+            if (po != null) {
+                wid = po.getWarehouseId();
+                poCode = po.getCode();
+                var w = warehouseRepository.findById(wid).orElse(null);
+                if (w != null) warehouseName = w.getName();
+            }
+
+            return SupplierDebtResponse.builder()
+                    .id(debt.getId())
+                    .supplierId(debt.getSupplierId())
+                    .purchaseOrderId(debt.getPurchaseOrderId())
+                    .purchaseOrderCode(poCode)
+                    .warehouseId(wid)
+                    .warehouseName(warehouseName)
+                    .totalDebt(debt.getTotalDebt())
+                    .paidAmount(debt.getPaidAmount())
+                    .remainingAmount(debt.getRemainingAmount())
+                    .status(debt.getStatus().name())
+                    .dueDate(debt.getDueDate())
+                    .createdAt(debt.getCreatedAt())
+                    .build();
+        }).toList();
     }
 
-    // ─────────────────────────────────────────────────────────
-    // HELPERS
-    // ─────────────────────────────────────────────────────────
+    // ĐÃ BỔ SUNG: Tính tổng công nợ của một Nhà cung cấp
+    @Transactional(readOnly = true)
+    public BigDecimal getTotalOutstandingBySupplier(UUID supplierId) {
+        BigDecimal total = supplierDebtRepository.getTotalOutstandingBySupplierId(supplierId);
+        return total != null ? total : BigDecimal.ZERO;
+    }
+
     private UUID getWarehouseFromDebt(SupplierDebt debt) {
         return purchaseOrderRepository.findById(debt.getPurchaseOrderId())
                 .map(PurchaseOrder::getWarehouseId)
@@ -212,9 +259,6 @@ public class FinanceService {
                         "PurchaseOrder", debt.getPurchaseOrderId()));
     }
 
-    // ─────────────────────────────────────────────────────────
-    // RECORDS (DTO nội bộ)
-    // ─────────────────────────────────────────────────────────
     public record CodReconciliationItem(
             String orderCode,
             BigDecimal amountReceived,

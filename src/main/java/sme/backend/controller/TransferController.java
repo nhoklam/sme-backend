@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.*;
 import sme.backend.dto.response.ApiResponse;
 import sme.backend.dto.response.PageResponse;
 import sme.backend.entity.InternalTransfer;
+import sme.backend.entity.User;
 import sme.backend.security.UserPrincipal;
 import sme.backend.service.TransferService;
 
@@ -24,7 +25,6 @@ public class TransferController {
 
     private final TransferService transferService;
 
-    /** POST /transfers — Tạo phiếu chuyển kho */
     @PostMapping
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
     public ResponseEntity<ApiResponse<InternalTransfer>> create(
@@ -37,6 +37,7 @@ public class TransferController {
 
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> rawItems = (List<Map<String, Object>>) body.get("items");
+
         List<TransferService.TransferItemRequest> items = rawItems.stream()
                 .map(i -> new TransferService.TransferItemRequest(
                         UUID.fromString((String) i.get("productId")),
@@ -48,26 +49,52 @@ public class TransferController {
                         fromWid, toWid, items, note, principal.getId())));
     }
 
-    /** GET /transfers — Danh sách phiếu chuyển kho theo kho */
+    @PutMapping("/{id}")
+    @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
+    public ResponseEntity<ApiResponse<InternalTransfer>> update(
+            @PathVariable UUID id,
+            @RequestBody Map<String, Object> body,
+            @AuthenticationPrincipal UserPrincipal principal) {
+
+        UUID toWid = UUID.fromString((String) body.get("toWarehouseId"));
+        String note = (String) body.get("note");
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> rawItems = (List<Map<String, Object>>) body.get("items");
+
+        List<TransferService.TransferItemRequest> items = rawItems.stream()
+                .map(i -> new TransferService.TransferItemRequest(
+                        UUID.fromString((String) i.get("productId")),
+                        Integer.parseInt(i.get("quantity").toString())
+                )).toList();
+
+        return ResponseEntity.ok(ApiResponse.ok("Cập nhật phiếu chuyển kho thành công",
+                transferService.updateTransfer(id, toWid, items, note, principal.getId())));
+    }
+
     @GetMapping
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
     public ResponseEntity<ApiResponse<PageResponse<InternalTransfer>>> getAll(
             @AuthenticationPrincipal UserPrincipal principal,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String keyword,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
-        UUID wid = principal.getWarehouseId();
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(required = false) UUID warehouseId) {
+        
+        UUID wid = (principal.getRole() == User.UserRole.ROLE_ADMIN) && warehouseId != null 
+                ? warehouseId : principal.getWarehouseId();
+        
         return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(
-                transferService.getByWarehouse(wid, PageRequest.of(page, size)))));
+                transferService.searchTransfers(wid, status, keyword, PageRequest.of(page, size)))));
     }
 
-    /** GET /transfers/{id} */
     @GetMapping("/{id}")
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
     public ResponseEntity<ApiResponse<InternalTransfer>> getOne(@PathVariable UUID id) {
         return ResponseEntity.ok(ApiResponse.ok(transferService.getById(id)));
     }
 
-    /** POST /transfers/{id}/dispatch — Xuất kho */
     @PostMapping("/{id}/dispatch")
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
     public ResponseEntity<ApiResponse<InternalTransfer>> dispatch(
@@ -77,7 +104,6 @@ public class TransferController {
                 transferService.dispatch(id, principal.getId())));
     }
 
-    /** POST /transfers/{id}/receive — Nhận hàng */
     @PostMapping("/{id}/receive")
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
     public ResponseEntity<ApiResponse<InternalTransfer>> receive(

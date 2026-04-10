@@ -19,20 +19,16 @@ public interface CustomerRepository extends JpaRepository<Customer, UUID> {
 
     boolean existsByPhoneNumber(String phoneNumber);
 
-    // Tìm kiếm CRM
-    @Query("""
-        SELECT c FROM Customer c
-        WHERE c.isActive = true
-        AND (LOWER(c.fullName) LIKE LOWER(CONCAT('%', :kw, '%'))
-          OR c.phoneNumber LIKE CONCAT('%', :kw, '%')
-          OR LOWER(c.email) LIKE LOWER(CONCAT('%', :kw, '%')))
-        ORDER BY c.fullName
-        """)
-    Page<Customer> search(@Param("kw") String keyword, Pageable pageable);
-
-    // Khách hàng theo hạng
-    Page<Customer> findByCustomerTierAndIsActiveTrue(
-            Customer.CustomerTier tier, Pageable pageable);
+    // ĐÃ NÂNG CẤP: Gộp cả tìm kiếm keyword và lọc theo hạng thẻ (tier) vào một Query linh hoạt
+    @Query("SELECT c FROM Customer c WHERE c.isActive = true " +
+           "AND (:tier IS NULL OR c.customerTier = :tier) " +
+           "AND (:kw IS NULL OR :kw = '' " +
+           "OR LOWER(c.fullName) LIKE LOWER(CONCAT('%', :kw, '%')) " +
+           "OR c.phoneNumber LIKE CONCAT('%', REPLACE(:kw, ' ', ''), '%') " +
+           "OR LOWER(c.email) LIKE LOWER(CONCAT('%', :kw, '%')))")
+    Page<Customer> searchWithFilters(@Param("kw") String keyword, 
+                                     @Param("tier") Customer.CustomerTier tier, 
+                                     Pageable pageable);
 
     // Top khách hàng theo tổng chi tiêu
     @Query("""

@@ -14,8 +14,7 @@ import java.util.List;
 import java.util.UUID;
 
 @Repository
-public interface CashbookTransactionRepository
-        extends JpaRepository<CashbookTransaction, UUID> {
+public interface CashbookTransactionRepository extends JpaRepository<CashbookTransaction, UUID> {
 
     List<CashbookTransaction> findByShiftIdOrderByCreatedAtAsc(UUID shiftId);
 
@@ -24,43 +23,81 @@ public interface CashbookTransactionRepository
             CashbookTransaction.FundType fundType,
             Pageable pageable);
 
-    // Số dư hiện tại của quỹ
     @Query("""
-        SELECT COALESCE(SUM(
+        SELECT SUM(
             CASE WHEN ct.transactionType = 'IN' THEN ct.amount
                  ELSE -ct.amount END
-        ), 0)
+        )
         FROM CashbookTransaction ct
         WHERE ct.warehouseId = :wid
         AND ct.fundType = :fundType
         """)
-    BigDecimal getCurrentBalance(@Param("wid")      UUID warehouseId,
-                                 @Param("fundType") CashbookTransaction.FundType fundType);
+    BigDecimal getCurrentBalanceByWarehouse(@Param("wid") UUID warehouseId,
+                                            @Param("fundType") CashbookTransaction.FundType fundType);
 
-    // Báo cáo sổ quỹ theo khoảng thời gian
+    @Query("""
+        SELECT SUM(
+            CASE WHEN ct.transactionType = 'IN' THEN ct.amount
+                 ELSE -ct.amount END
+        )
+        FROM CashbookTransaction ct
+        WHERE ct.fundType = :fundType
+        """)
+    BigDecimal getCurrentBalanceAll(@Param("fundType") CashbookTransaction.FundType fundType);
+
     @Query("""
         SELECT ct FROM CashbookTransaction ct
         WHERE ct.warehouseId = :wid
         AND ct.createdAt BETWEEN :from AND :to
-        ORDER BY ct.createdAt ASC
+        ORDER BY ct.createdAt DESC
         """)
     List<CashbookTransaction> findByWarehouseAndDateRange(
             @Param("wid")  UUID warehouseId,
             @Param("from") Instant from,
             @Param("to")   Instant to);
 
-    // Tổng thu/chi theo loại quỹ trong khoảng thời gian
-    @Query(value = """
-        SELECT
-            fund_type,
-            transaction_type,
-            SUM(amount) AS total
-        FROM cashbook_transactions
-        WHERE warehouse_id = :wid
-        AND created_at BETWEEN :from AND :to
-        GROUP BY fund_type, transaction_type
-        """, nativeQuery = true)
-    List<Object[]> getCashflowSummary(@Param("wid")  UUID warehouseId,
-                                      @Param("from") Instant from,
-                                      @Param("to")   Instant to);
+    @Query("""
+        SELECT ct FROM CashbookTransaction ct
+        WHERE ct.createdAt BETWEEN :from AND :to
+        ORDER BY ct.createdAt DESC
+        """)
+    List<CashbookTransaction> findAllByDateRange(
+            @Param("from") Instant from,
+            @Param("to")   Instant to);
+
+    // =========================================================================
+    // HÀM TÌM KIẾM CÓ PHÂN TRANG (Đã sửa lỗi PostgreSQL Null Parameter)
+    // =========================================================================
+    
+    @Query("""
+        SELECT ct FROM CashbookTransaction ct
+        WHERE ct.createdAt BETWEEN :from AND :to
+        AND ct.fundType IN :fundTypes
+        AND ct.transactionType IN :txnTypes
+        AND (:keyword = '' OR LOWER(ct.description) LIKE LOWER(CONCAT('%', :keyword, '%')) OR LOWER(ct.referenceType) LIKE LOWER(CONCAT('%', :keyword, '%')))
+        """)
+    Page<CashbookTransaction> searchCashbookAll(
+            @Param("from") Instant from,
+            @Param("to") Instant to,
+            @Param("fundTypes") List<CashbookTransaction.FundType> fundTypes,
+            @Param("txnTypes") List<CashbookTransaction.TransactionType> txnTypes,
+            @Param("keyword") String keyword,
+            Pageable pageable);
+
+    @Query("""
+        SELECT ct FROM CashbookTransaction ct
+        WHERE ct.warehouseId = :wid
+        AND ct.createdAt BETWEEN :from AND :to
+        AND ct.fundType IN :fundTypes
+        AND ct.transactionType IN :txnTypes
+        AND (:keyword = '' OR LOWER(ct.description) LIKE LOWER(CONCAT('%', :keyword, '%')) OR LOWER(ct.referenceType) LIKE LOWER(CONCAT('%', :keyword, '%')))
+        """)
+    Page<CashbookTransaction> searchCashbookByWarehouse(
+            @Param("wid") UUID warehouseId,
+            @Param("from") Instant from,
+            @Param("to") Instant to,
+            @Param("fundTypes") List<CashbookTransaction.FundType> fundTypes,
+            @Param("txnTypes") List<CashbookTransaction.TransactionType> txnTypes,
+            @Param("keyword") String keyword,
+            Pageable pageable);
 }

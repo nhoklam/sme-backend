@@ -2,7 +2,6 @@ package sme.backend.controller;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -11,10 +10,16 @@ import org.springframework.web.bind.annotation.*;
 import sme.backend.dto.request.CreateCashbookEntryRequest;
 import sme.backend.dto.request.PaySupplierDebtRequest;
 import sme.backend.dto.response.ApiResponse;
+import sme.backend.dto.response.SupplierDebtResponse;
 import sme.backend.entity.CashbookTransaction;
 import sme.backend.entity.SupplierDebt;
+import sme.backend.entity.User;
 import sme.backend.security.UserPrincipal;
 import sme.backend.service.FinanceService;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -29,25 +34,32 @@ public class FinanceController {
 
     private final FinanceService financeService;
 
-    // ── SỔ QUỸ ──────────────────────────────────────────────
-
-    /** POST /finance/cashbook — Tạo Phiếu Thu/Chi thủ công (FIN-02) */
     @PostMapping("/cashbook")
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
     public ResponseEntity<ApiResponse<CashbookTransaction>> createEntry(
             @Valid @RequestBody CreateCashbookEntryRequest req,
             @AuthenticationPrincipal UserPrincipal principal) {
+            
+        if (principal.getRole() != User.UserRole.ROLE_ADMIN || req.getWarehouseId() == null) {
+            req.setWarehouseId(principal.getWarehouseId());
+        }
+
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.created(
                 financeService.createManualEntry(req, principal.getUsername())));
     }
 
-    /** GET /finance/cashbook/balance — Số dư quỹ hiện tại */
     @GetMapping("/cashbook/balance")
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
     public ResponseEntity<ApiResponse<Map<String, BigDecimal>>> getBalance(
-            @RequestParam UUID warehouseId) {
-        BigDecimal cash = financeService.getCurrentBalance(warehouseId, "CASH_111");
-        BigDecimal bank = financeService.getCurrentBalance(warehouseId, "BANK_112");
+            @AuthenticationPrincipal UserPrincipal principal,
+            @RequestParam(required = false) UUID warehouseId) {
+            
+        UUID wid = (principal.getRole() == User.UserRole.ROLE_ADMIN) && warehouseId != null 
+                ? warehouseId : principal.getWarehouseId();
+
+        BigDecimal cash = financeService.getCurrentBalance(wid, "CASH_111");
+        BigDecimal bank = financeService.getCurrentBalance(wid, "BANK_112");
+
         return ResponseEntity.ok(ApiResponse.ok(Map.of(
                 "CASH_111", cash,
                 "BANK_112", bank,
@@ -55,27 +67,42 @@ public class FinanceController {
         )));
     }
 
-    /** GET /finance/cashbook — Sổ quỹ theo khoảng thời gian (REP-04) */
     @GetMapping("/cashbook")
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
     public ResponseEntity<ApiResponse<List<CashbookTransaction>>> getCashbook(
-            @RequestParam UUID warehouseId,
+            @AuthenticationPrincipal UserPrincipal principal,
+            @RequestParam(required = false) UUID warehouseId,
             @RequestParam Instant from,
             @RequestParam Instant to) {
+            
+        UUID wid = (principal.getRole() == User.UserRole.ROLE_ADMIN) && warehouseId != null 
+                ? warehouseId : principal.getWarehouseId();
+
         return ResponseEntity.ok(ApiResponse.ok(
-                financeService.getCashbookReport(warehouseId, from, to)));
+                financeService.getCashbookReport(wid, from, to)));
     }
 
-    // ── CÔNG NỢ NHÀ CUNG CẤP ─────────────────────────────────
-
-    /** GET /finance/supplier-debts — Danh sách công nợ chưa thanh toán (FIN-03) */
     @GetMapping("/supplier-debts")
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
-    public ResponseEntity<ApiResponse<List<SupplierDebt>>> getOutstandingDebts() {
-        return ResponseEntity.ok(ApiResponse.ok(financeService.getOutstandingDebts()));
+    public ResponseEntity<ApiResponse<List<SupplierDebtResponse>>> getOutstandingDebts(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @RequestParam(required = false) UUID warehouseId) {
+            
+        UUID wid = (principal.getRole() == User.UserRole.ROLE_ADMIN) && warehouseId != null 
+                ? warehouseId : principal.getWarehouseId();
+
+        return ResponseEntity.ok(ApiResponse.ok(financeService.getOutstandingDebts(wid)));
     }
 
-    /** POST /finance/supplier-debts/pay — Thanh toán công nợ (FIN-04) */
+    // ĐÃ BỔ SUNG: Lấy tổng nợ của một Nhà cung cấp
+    @GetMapping("/supplier-debts/supplier/{supplierId}/total")
+    @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
+    public ResponseEntity<ApiResponse<BigDecimal>> getTotalOutstandingBySupplier(
+            @PathVariable UUID supplierId) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                financeService.getTotalOutstandingBySupplier(supplierId)));
+    }
+
     @PostMapping("/supplier-debts/pay")
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
     public ResponseEntity<ApiResponse<SupplierDebt>> payDebt(
@@ -85,9 +112,6 @@ public class FinanceController {
                 financeService.paySupplierDebt(req, principal.getUsername())));
     }
 
-    // ── ĐỐI SOÁT COD ─────────────────────────────────────────
-
-    /** POST /finance/cod-reconciliation — Đối soát COD từ Excel (FIN-05) */
     @PostMapping("/cod-reconciliation")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<FinanceService.CodReconciliationResult>> reconcileCOD(
@@ -105,5 +129,27 @@ public class FinanceController {
 
         return ResponseEntity.ok(ApiResponse.ok(
                 financeService.reconcileCOD(items, warehouseId, principal.getUsername())));
+    }
+
+    @GetMapping("/cashbook/search")
+    @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
+    public ResponseEntity<ApiResponse<Page<CashbookTransaction>>> searchCashbook(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @RequestParam(required = false) UUID warehouseId,
+            @RequestParam Instant from,
+            @RequestParam Instant to,
+            @RequestParam(defaultValue = "ALL") String fundType,
+            @RequestParam(defaultValue = "ALL") String transactionType,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size) {
+            
+        UUID wid = (principal.getRole() == User.UserRole.ROLE_ADMIN) && warehouseId != null 
+                ? warehouseId : principal.getWarehouseId();
+
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
+
+        return ResponseEntity.ok(ApiResponse.ok(
+                financeService.searchCashbook(wid, from, to, fundType, transactionType, keyword, pageable)));
     }
 }

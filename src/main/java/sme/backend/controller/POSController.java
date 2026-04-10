@@ -23,11 +23,6 @@ import sme.backend.service.ShiftService;
 import java.util.List;
 import java.util.UUID;
 
-/**
- * POSController — Module 0: Bán hàng tại quầy
- * Bảo mật: Backend tự động extract warehouseId từ JWT Token
- * Cashier không thể bán hàng của chi nhánh khác
- */
 @RestController
 @RequestMapping("/pos")
 @RequiredArgsConstructor
@@ -37,9 +32,6 @@ public class POSController {
     private final POSService posService;
     private final InvoiceRepository invoiceRepository;
 
-    // ── CA LÀM VIỆC ──────────────────────────────────────────
-
-    /** POST /pos/shifts/open — POS-01: Mở ca */
     @PostMapping("/shifts/open")
     @PreAuthorize("hasAnyRole('CASHIER','MANAGER')")
     public ResponseEntity<ApiResponse<ShiftResponse>> openShift(
@@ -54,7 +46,6 @@ public class POSController {
         return ResponseEntity.ok(ApiResponse.ok("Mở ca thành công", shift));
     }
 
-    /** POST /pos/shifts/close — POS-09: Đóng ca mù */
     @PostMapping("/shifts/close")
     @PreAuthorize("hasAnyRole('CASHIER','MANAGER')")
     public ResponseEntity<ApiResponse<ShiftResponse>> closeShift(
@@ -64,16 +55,19 @@ public class POSController {
         return ResponseEntity.ok(ApiResponse.ok("Đóng ca thành công", shift));
     }
 
-    /** GET /pos/shifts/current — Lấy thông tin ca đang mở */
     @GetMapping("/shifts/current")
     @PreAuthorize("hasAnyRole('CASHIER','MANAGER')")
     public ResponseEntity<ApiResponse<ShiftResponse>> getCurrentShift(
             @AuthenticationPrincipal UserPrincipal principal) {
-        var shift = shiftService.getOpenShiftByCashier(principal.getId());
-        return ResponseEntity.ok(ApiResponse.ok(shiftService.mapToResponse(shift)));
+        try {
+            var shift = shiftService.getOpenShiftByCashier(principal.getId());
+            return ResponseEntity.ok(ApiResponse.ok(shiftService.mapToResponse(shift)));
+        } catch (BusinessException e) {
+            // Thay vì ném 400 Bad Request, trả về 200 OK với data = null để Frontend biết là chưa mở ca
+            return ResponseEntity.ok(ApiResponse.ok(null));
+        }
     }
 
-    /** GET /pos/shifts/pending — Ca chờ Manager duyệt */
     @GetMapping("/shifts/pending")
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
     public ResponseEntity<ApiResponse<List<ShiftResponse>>> getPendingShifts(
@@ -82,7 +76,6 @@ public class POSController {
         return ResponseEntity.ok(ApiResponse.ok(shiftService.getPendingShifts(warehouseId)));
     }
 
-    /** POST /pos/shifts/{id}/approve — Duyệt chốt ca */
     @PostMapping("/shifts/{id}/approve")
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
     public ResponseEntity<ApiResponse<ShiftResponse>> approveShift(
@@ -92,12 +85,6 @@ public class POSController {
         return ResponseEntity.ok(ApiResponse.ok("Duyệt ca thành công", shift));
     }
 
-    // ── THANH TOÁN ────────────────────────────────────────────
-
-    /**
-     * POST /pos/checkout — POS-04, POS-05: Thanh toán đa phương thức
-     * Toàn bộ xử lý là 1 transaction ACID
-     */
     @PostMapping("/checkout")
     @PreAuthorize("hasAnyRole('CASHIER','MANAGER')")
     public ResponseEntity<ApiResponse<InvoiceResponse>> checkout(
@@ -112,13 +99,11 @@ public class POSController {
         return ResponseEntity.ok(ApiResponse.ok("Thanh toán thành công", invoice));
     }
 
-    /** GET /pos/invoices/{id} — Chi tiết hóa đơn (in hóa đơn) */
     @GetMapping("/invoices/{id}")
     @PreAuthorize("hasAnyRole('CASHIER','MANAGER','ADMIN')")
     public ResponseEntity<ApiResponse<InvoiceResponse>> getInvoice(@PathVariable UUID id) {
         var invoice = invoiceRepository.findByIdWithDetails(id)
                 .orElseThrow(() -> new sme.backend.exception.ResourceNotFoundException("Invoice", id));
-        // Map to response inline (simple version)
         return ResponseEntity.ok(ApiResponse.ok(
                 InvoiceResponse.builder()
                         .id(invoice.getId())
@@ -134,7 +119,6 @@ public class POSController {
         ));
     }
 
-    /** GET /pos/invoices — Danh sách hóa đơn theo ca */
     @GetMapping("/invoices")
     @PreAuthorize("hasAnyRole('CASHIER','MANAGER','ADMIN')")
     public ResponseEntity<ApiResponse<PageResponse<InvoiceResponse>>> getInvoicesByShift(
@@ -143,7 +127,6 @@ public class POSController {
             @RequestParam(defaultValue = "20") int size) {
         var paged = invoiceRepository.findByShiftIdOrderByCreatedAtDesc(
                 shiftId, PageRequest.of(page, size));
-        // Map entities to response
         var mapped = paged.map(inv -> InvoiceResponse.builder()
                 .id(inv.getId())
                 .code(inv.getCode())
@@ -154,5 +137,70 @@ public class POSController {
                 .createdAt(inv.getCreatedAt())
                 .build());
         return ResponseEntity.ok(ApiResponse.ok(PageResponse.of(mapped)));
+    }
+
+    @GetMapping("/invoices/code/{code}")
+    @PreAuthorize("hasAnyRole('CASHIER','MANAGER','ADMIN')")
+    public ResponseEntity<ApiResponse<InvoiceResponse>> getInvoiceByCode(@PathVariable String code) {
+        var invoice = invoiceRepository.findByCode(code)
+                .orElseThrow(() -> new sme.backend.exception.ResourceNotFoundException("Không tìm thấy hóa đơn mã: " + code));
+        
+        List<InvoiceResponse.ItemResponse> items = invoice.getItems().stream()
+                .map(i -> InvoiceResponse.ItemResponse.builder()
+                        .productId(i.getProductId())
+                        .quantity(i.getQuantity())
+                        .unitPrice(i.getUnitPrice())
+                        .macPrice(i.getMacPrice())
+                        .subtotal(i.getSubtotal())
+                        .build()).toList();
+
+        return ResponseEntity.ok(ApiResponse.ok(
+                InvoiceResponse.builder()
+                        .id(invoice.getId())
+                        .code(invoice.getCode())
+                        .type(invoice.getType().name())
+                        .totalAmount(invoice.getTotalAmount())
+                        .finalAmount(invoice.getFinalAmount())
+                        .createdAt(invoice.getCreatedAt())
+                        .items(items)
+                        .build()
+        ));
+    }
+
+    // Đã chuyển từ record sang static class chuẩn để tránh lỗi ClassLoader của Maven
+    public static class RefundRequestDTO {
+        private UUID originalInvoiceId;
+        private UUID shiftId;
+        private List<POSService.RefundItem> items;
+        private String returnDestination;
+        private String note;
+
+        public UUID getOriginalInvoiceId() { return originalInvoiceId; }
+        public void setOriginalInvoiceId(UUID originalInvoiceId) { this.originalInvoiceId = originalInvoiceId; }
+        public UUID getShiftId() { return shiftId; }
+        public void setShiftId(UUID shiftId) { this.shiftId = shiftId; }
+        public List<POSService.RefundItem> getItems() { return items; }
+        public void setItems(List<POSService.RefundItem> items) { this.items = items; }
+        public String getReturnDestination() { return returnDestination; }
+        public void setReturnDestination(String returnDestination) { this.returnDestination = returnDestination; }
+        public String getNote() { return note; }
+        public void setNote(String note) { this.note = note; }
+    }
+
+    @PostMapping("/refund")
+    @PreAuthorize("hasAnyRole('CASHIER','MANAGER')")
+    public ResponseEntity<ApiResponse<InvoiceResponse>> refund(
+            @AuthenticationPrincipal sme.backend.security.UserPrincipal principal, // Dùng đường dẫn tuyệt đối an toàn
+            @RequestBody RefundRequestDTO req) {
+            
+        if (principal.getWarehouseId() == null) {
+            throw new BusinessException("NO_WAREHOUSE", "Tài khoản chưa được gán chi nhánh");
+        }
+
+        InvoiceResponse invoice = posService.refund(
+                req.getOriginalInvoiceId(), req.getShiftId(), req.getItems(),
+                req.getReturnDestination(), principal.getId(), principal.getWarehouseId(), req.getNote());
+                
+        return ResponseEntity.ok(ApiResponse.ok("Trả hàng thành công", invoice));
     }
 }

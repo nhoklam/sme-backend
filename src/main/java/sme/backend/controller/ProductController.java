@@ -31,11 +31,13 @@ public class ProductController {
     public ResponseEntity<ApiResponse<PageResponse<ProductResponse>>> search(
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) UUID categoryId,
+            @RequestParam(required = false) Boolean isActive, // BỔ SUNG DÒNG NÀY
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         var pageable = PageRequest.of(page, size, Sort.by("name"));
+        // CẬP NHẬT GỌI SERVICE
         return ResponseEntity.ok(ApiResponse.ok(
-                PageResponse.of(productService.search(keyword, categoryId, pageable))));
+                PageResponse.of(productService.search(keyword, categoryId, isActive, pageable))));
     }
 
     /** GET /products/barcode/{code} — Quét mã vạch POS (POS-02) */

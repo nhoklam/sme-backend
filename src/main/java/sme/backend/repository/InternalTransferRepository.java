@@ -29,4 +29,56 @@ public interface InternalTransferRepository extends JpaRepository<InternalTransf
         WHERE t.id = :id
         """)
     Optional<InternalTransfer> findByIdWithItems(@Param("id") UUID id);
+
+    // =========================================================================
+    // CÁC HÀM TÌM KIẾM ĐÃ TỐI ƯU ĐỂ TRÁNH LỖI NULL ENUM TRÊN POSTGRESQL
+    // =========================================================================
+
+    // 1. Tìm tất cả (cho ADMIN) - Khi KHÔNG lọc trạng thái
+    @Query("""
+        SELECT t FROM InternalTransfer t
+        WHERE (:keyword IS NULL OR :keyword = '' OR LOWER(t.code) LIKE LOWER(CONCAT('%', :keyword, '%')))
+        ORDER BY t.createdAt DESC
+        """)
+    Page<InternalTransfer> searchAllTransfers(
+            @Param("keyword") String keyword, 
+            Pageable pageable);
+
+    // 2. Tìm tất cả (cho ADMIN) - Khi CÓ lọc trạng thái cụ thể
+    @Query("""
+        SELECT t FROM InternalTransfer t
+        WHERE t.status = :status
+        AND (:keyword IS NULL OR :keyword = '' OR LOWER(t.code) LIKE LOWER(CONCAT('%', :keyword, '%')))
+        ORDER BY t.createdAt DESC
+        """)
+    Page<InternalTransfer> searchAllTransfersWithStatus(
+            @Param("status") InternalTransfer.TransferStatus status,
+            @Param("keyword") String keyword, 
+            Pageable pageable);
+
+    // 3. Tìm theo kho (cho MANAGER) - Khi KHÔNG lọc trạng thái
+    @Query("""
+        SELECT t FROM InternalTransfer t
+        WHERE (t.fromWarehouseId = :wid OR t.toWarehouseId = :wid)
+        AND (:keyword IS NULL OR :keyword = '' OR LOWER(t.code) LIKE LOWER(CONCAT('%', :keyword, '%')))
+        ORDER BY t.createdAt DESC
+        """)
+    Page<InternalTransfer> searchTransfersByWarehouse(
+            @Param("wid") UUID warehouseId,
+            @Param("keyword") String keyword, 
+            Pageable pageable);
+
+    // 4. Tìm theo kho (cho MANAGER) - Khi CÓ lọc trạng thái cụ thể
+    @Query("""
+        SELECT t FROM InternalTransfer t
+        WHERE (t.fromWarehouseId = :wid OR t.toWarehouseId = :wid)
+        AND t.status = :status
+        AND (:keyword IS NULL OR :keyword = '' OR LOWER(t.code) LIKE LOWER(CONCAT('%', :keyword, '%')))
+        ORDER BY t.createdAt DESC
+        """)
+    Page<InternalTransfer> searchTransfersByWarehouseWithStatus(
+            @Param("wid") UUID warehouseId,
+            @Param("status") InternalTransfer.TransferStatus status,
+            @Param("keyword") String keyword, 
+            Pageable pageable);
 }

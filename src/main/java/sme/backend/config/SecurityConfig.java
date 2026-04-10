@@ -74,7 +74,7 @@ public class SecurityConfig {
                 // Public endpoints
                 .requestMatchers("/auth/**").permitAll()
                 .requestMatchers("/actuator/health").permitAll()
-                .requestMatchers("/ws/**").permitAll()          // WebSocket handshake
+                .requestMatchers("/api/ws/**", "/ws/**").permitAll()      // WebSocket handshake
 
                 // ── MODULE 0: POS ──────────────────────────────────────
                 .requestMatchers("/pos/**")
@@ -97,12 +97,17 @@ public class SecurityConfig {
                 // ── MODULE 4: E-COMMERCE & ORDERS ─────────────────────
                 .requestMatchers(HttpMethod.GET, "/orders/**")
                     .hasAnyRole("CASHIER", "MANAGER", "ADMIN")
+                .requestMatchers(HttpMethod.PATCH, "/orders/**") // <-- THÊM DÒNG NÀY ĐỂ CHO PHÉP CASHIER CẬP NHẬT
+                    .hasAnyRole("CASHIER", "MANAGER", "ADMIN")   // <-- THÊM DÒNG NÀY
                 .requestMatchers("/orders/**")
                     .hasAnyRole("MANAGER", "ADMIN")
 
                 // ── MODULE 5: CRM ──────────────────────────────────────
                 .requestMatchers(HttpMethod.GET, "/customers/**")
                     .hasAnyRole("CASHIER", "MANAGER", "ADMIN")
+                .requestMatchers(HttpMethod.POST, "/customers") // <--- DÒNG MỚI ĐƯỢC THÊM
+                    .hasAnyRole("CASHIER", "MANAGER", "ADMIN")
+                // Các thao tác nhạy cảm khác như sửa, xóa (PUT, DELETE) thì chỉ Manager, Admin làm
                 .requestMatchers("/customers/**")
                     .hasAnyRole("MANAGER", "ADMIN")
 
@@ -117,8 +122,9 @@ public class SecurityConfig {
                 // ── MODULE 8: ADMIN SETTINGS ───────────────────────────
                 .requestMatchers("/admin/**")
                     .hasRole("ADMIN")
-                .requestMatchers("/users/**")
-                    .hasRole("ADMIN")
+                .requestMatchers(HttpMethod.GET, "/warehouses/**")
+                    .hasAnyRole("MANAGER", "ADMIN")
+                // Các thao tác Thêm/Sửa/Xóa (POST, PUT, PATCH) vẫn bị chặn chỉ cho ADMIN
                 .requestMatchers("/warehouses/**")
                     .hasRole("ADMIN")
 

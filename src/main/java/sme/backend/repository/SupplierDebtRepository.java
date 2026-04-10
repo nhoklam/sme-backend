@@ -17,8 +17,11 @@ public interface SupplierDebtRepository extends JpaRepository<SupplierDebt, UUID
     Optional<SupplierDebt> findByPurchaseOrderId(UUID purchaseOrderId);
 
     List<SupplierDebt> findBySupplierIdAndStatusNot(UUID supplierId, SupplierDebt.DebtStatus status);
-
+    
     List<SupplierDebt> findByStatus(SupplierDebt.DebtStatus status);
+
+    // BỔ SUNG DÒNG NÀY ĐỂ TÌM CÁC CÔNG NỢ CHƯA TRẢ HOẶC TRẢ MỘT PHẦN
+    List<SupplierDebt> findByStatusNot(SupplierDebt.DebtStatus status);
 
     @Query("""
         SELECT COALESCE(SUM(sd.totalDebt - sd.paidAmount), 0)
@@ -27,4 +30,8 @@ public interface SupplierDebtRepository extends JpaRepository<SupplierDebt, UUID
         AND sd.status != 'PAID'
         """)
     BigDecimal getTotalOutstandingBySupplierId(@Param("sid") UUID supplierId);
+    @Query("SELECT sd FROM SupplierDebt sd WHERE sd.status != 'PAID' " +
+           "AND (:warehouseId IS NULL OR sd.purchaseOrderId IN " +
+           "(SELECT po.id FROM PurchaseOrder po WHERE po.warehouseId = :warehouseId))")
+    List<SupplierDebt> findOutstandingDebtsByWarehouse(@Param("warehouseId") UUID warehouseId);
 }

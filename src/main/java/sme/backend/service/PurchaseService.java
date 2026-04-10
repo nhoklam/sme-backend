@@ -28,12 +28,8 @@ public class PurchaseService {
     private final ProductRepository productRepository;
     private final InventoryService inventoryService;
 
-    // ─────────────────────────────────────────────────────────
-    // TẠO PHIẾU NHẬP KHO (INV-02)
-    // ─────────────────────────────────────────────────────────
     @Transactional
     public PurchaseOrder createPurchaseOrder(CreatePurchaseOrderRequest req, UUID createdBy) {
-
         Supplier supplier = supplierRepository.findById(req.getSupplierId())
                 .orElseThrow(() -> new ResourceNotFoundException("Supplier", req.getSupplierId()));
 
@@ -52,67 +48,82 @@ public class PurchaseService {
 
             PurchaseItem item = PurchaseItem.builder()
                     .productId(product.getId())
-                    .quantity(itemReq.getQuantity())
-                    .importPrice(itemReq.getImportPrice())
+                    .quantity(itemReq.getQuantity() != null ? itemReq.getQuantity() : 0)
+                    .importPrice(itemReq.getImportPrice() != null ? itemReq.getImportPrice() : BigDecimal.ZERO)
                     .build();
             po.addItem(item);
         }
         po.recalculateTotal();
 
         po = purchaseOrderRepository.save(po);
-        log.info("PurchaseOrder created: {} for supplier: {}", po.getCode(), supplier.getName());
+        log.info("Đã tạo phiếu nhập kho: {}", po.getCode());
         return po;
     }
 
-    // ─────────────────────────────────────────────────────────
-    // DUYỆT PHIẾU NHẬP KHO (INV-02) — Manager/Admin
-    // Đây là bước kích hoạt tất cả side effects
-    // ─────────────────────────────────────────────────────────
     @Transactional
     public PurchaseOrder approvePurchaseOrder(UUID poId, UUID approvedBy) {
-
         PurchaseOrder po = purchaseOrderRepository.findByIdWithItems(poId)
                 .orElseThrow(() -> new ResourceNotFoundException("PurchaseOrder", poId));
 
         if (po.getStatus() != PurchaseOrder.PurchaseStatus.PENDING) {
-            throw new BusinessException("INVALID_STATUS",
-                    "Chỉ có thể duyệt phiếu ở trạng thái PENDING. Trạng thái hiện tại: " + po.getStatus());
+            throw new BusinessException("INVALID_STATUS", "Chỉ có thể duyệt phiếu ở trạng thái PENDING.");
         }
 
-        // 1. Nhập kho + tái tính MAC cho từng sản phẩm
-        for (PurchaseItem item : po.getItems()) {
-            inventoryService.importStock(
-                    item.getProductId(),
-                    po.getWarehouseId(),
-                    item.getQuantity(),
-                    item.getImportPrice(),
-                    po.getId(),
-                    approvedBy.toString()
-            );
+        try {
+            po.setStatus(PurchaseOrder.PurchaseStatus.COMPLETED);
+            po.setApprovedBy(approvedBy);
+            po.setApprovedAt(Instant.now());
+            po = purchaseOrderRepository.save(po);
+
+            String operator = approvedBy != null ? approvedBy.toString() : "SYSTEM";
+
+            // 1. Nhập kho từng mặt hàng an toàn
+            if (po.getItems() != null) {
+                for (PurchaseItem item : po.getItems()) {
+                    BigDecimal importPrice = item.getImportPrice() != null ? item.getImportPrice() : BigDecimal.ZERO;
+                    int quantity = item.getQuantity() != null ? item.getQuantity() : 0;
+                    
+                    inventoryService.importStock(
+                            item.getProductId(),
+                            po.getWarehouseId(),
+                            quantity,
+                            importPrice,
+                            po.getId(), 
+                            operator
+                    );
+                }
+            } else {
+                throw new BusinessException("EMPTY_ITEMS", "Phiếu nhập kho không có sản phẩm nào.");
+            }
+
+            // 2. Tạo công nợ NCC an toàn
+            Supplier supplier = supplierRepository.findById(po.getSupplierId()).orElse(null);
+            int paymentTerms = 30;
+            if (supplier != null && supplier.getPaymentTerms() != null) {
+                paymentTerms = supplier.getPaymentTerms();
+            }
+            
+            BigDecimal totalDebt = po.getTotalAmount() != null ? po.getTotalAmount() : BigDecimal.ZERO;
+
+            SupplierDebt debt = SupplierDebt.builder()
+                    .supplierId(po.getSupplierId())
+                    .purchaseOrderId(po.getId())
+                    .totalDebt(totalDebt)
+                    .paidAmount(BigDecimal.ZERO)
+                    .status(SupplierDebt.DebtStatus.UNPAID)
+                    .dueDate(LocalDate.now().plusDays(paymentTerms))
+                    .build();
+            supplierDebtRepository.save(debt);
+
+            return po;
+            
+        } catch (BusinessException be) {
+            throw be; // Ném thẳng lỗi Business (nếu do nghiệp vụ)
+        } catch (Exception e) {
+            log.error("Lỗi hệ thống cực kỳ nghiêm trọng khi duyệt phiếu: ", e);
+            // Gói mọi lỗi hệ thống (NullPointer, DB Constraint...) thành BusinessException để hiện lên UI
+            throw new BusinessException("APPROVE_CRASH", "Lỗi xử lý hệ thống: " + e.getMessage() + " (Chi tiết: " + e.getClass().getSimpleName() + ")");
         }
-
-        // 2. Cập nhật trạng thái PO
-        po.setStatus(PurchaseOrder.PurchaseStatus.COMPLETED);
-        po.setApprovedBy(approvedBy);
-        po.setApprovedAt(Instant.now());
-        po = purchaseOrderRepository.save(po);
-
-        // 3. Tự động tạo bản ghi Công nợ Nhà cung cấp (FIN-03)
-        Supplier supplier = supplierRepository.findById(po.getSupplierId()).orElse(null);
-        int paymentTerms = supplier != null ? supplier.getPaymentTerms() : 30;
-
-        SupplierDebt debt = SupplierDebt.builder()
-                .supplierId(po.getSupplierId())
-                .purchaseOrderId(po.getId())
-                .totalDebt(po.getTotalAmount())
-                .paidAmount(BigDecimal.ZERO)
-                .status(SupplierDebt.DebtStatus.UNPAID)
-                .dueDate(LocalDate.now().plusDays(paymentTerms))
-                .build();
-        supplierDebtRepository.save(debt);
-
-        log.info("PurchaseOrder approved: {} | debt created: {}", po.getCode(), po.getTotalAmount());
-        return po;
     }
 
     @Transactional
@@ -121,8 +132,7 @@ public class PurchaseService {
                 .orElseThrow(() -> new ResourceNotFoundException("PurchaseOrder", poId));
 
         if (po.getStatus() == PurchaseOrder.PurchaseStatus.COMPLETED) {
-            throw new BusinessException("CANNOT_CANCEL",
-                    "Không thể hủy phiếu nhập kho đã hoàn thành");
+            throw new BusinessException("CANNOT_CANCEL", "Không thể hủy phiếu nhập kho đã hoàn thành");
         }
         po.setStatus(PurchaseOrder.PurchaseStatus.CANCELLED);
         po.setNote((po.getNote() != null ? po.getNote() + " | " : "") + "Lý do hủy: " + reason);
@@ -131,7 +141,13 @@ public class PurchaseService {
 
     @Transactional(readOnly = true)
     public Page<PurchaseOrder> getByWarehouse(UUID warehouseId, Pageable pageable) {
+        if (warehouseId == null) return purchaseOrderRepository.findAll(pageable);
         return purchaseOrderRepository.findByWarehouseIdOrderByCreatedAtDesc(warehouseId, pageable);
+    }
+
+    @Transactional(readOnly = true)
+    public Page<PurchaseOrder> getBySupplier(UUID supplierId, Pageable pageable) {
+        return purchaseOrderRepository.findBySupplierIdOrderByCreatedAtDesc(supplierId, pageable);
     }
 
     @Transactional(readOnly = true)

@@ -1,5 +1,6 @@
 package sme.backend.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore; // 1. Bổ sung import này
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -12,6 +13,7 @@ import java.util.UUID;
 @Builder
 public class TransferItem extends BaseSimpleEntity {
 
+    @JsonIgnore // 2. BỔ SUNG DÒNG NÀY ĐỂ NGẮT ĐỆ QUY
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "transfer_id", nullable = false)
     private InternalTransfer transfer;

@@ -14,6 +14,7 @@ import sme.backend.dto.response.ApiResponse;
 import sme.backend.dto.response.OrderResponse;
 import sme.backend.dto.response.PageResponse;
 import sme.backend.entity.Order;
+import sme.backend.entity.User;
 import sme.backend.security.UserPrincipal;
 import sme.backend.service.OrderService;
 
@@ -28,7 +29,6 @@ public class OrderController {
 
     private final OrderService orderService;
 
-    /** POST /orders — Tạo đơn hàng Online */
     @PostMapping
     public ResponseEntity<ApiResponse<OrderResponse>> createOrder(
             @Valid @RequestBody CreateOrderRequest req) {
@@ -36,49 +36,51 @@ public class OrderController {
                 .body(ApiResponse.created(orderService.createOrder(req)));
     }
 
-    /** GET /orders — Danh sách đơn hàng */
     @GetMapping
-    @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
+    @PreAuthorize("hasAnyRole('CASHIER','MANAGER','ADMIN')")
     public ResponseEntity<ApiResponse<PageResponse<OrderResponse>>> getOrders(
             @AuthenticationPrincipal UserPrincipal principal,
             @RequestParam(required = false) String status,
+            @RequestParam(required = false) String keyword, // ĐÃ THÊM
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(required = false) UUID warehouseId) {
 
-        // Manager chỉ thấy đơn của kho mình; Admin thấy tất cả
-        UUID warehouseId = principal.getRole().name().equals("ROLE_ADMIN")
-                ? null : principal.getWarehouseId();
+        UUID wid = (principal.getRole() == User.UserRole.ROLE_ADMIN) && warehouseId != null 
+                ? warehouseId : principal.getWarehouseId();
 
         Order.OrderStatus orderStatus = null;
-        if (status != null) {
+        if (status != null && !status.isBlank()) {
             try { orderStatus = Order.OrderStatus.valueOf(status.toUpperCase()); }
             catch (IllegalArgumentException ignored) {}
         }
 
         var pageable = PageRequest.of(page, size, Sort.by("createdAt").descending());
+        // Truyền thêm keyword vào service
         return ResponseEntity.ok(ApiResponse.ok(
-                PageResponse.of(orderService.getOrders(warehouseId, orderStatus, pageable))));
+                PageResponse.of(orderService.getOrders(wid, orderStatus, keyword, pageable))));
     }
 
-    /** GET /orders/pending — Đơn cần đóng gói */
     @GetMapping("/pending")
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
     public ResponseEntity<ApiResponse<List<OrderResponse>>> getPendingOrders(
-            @AuthenticationPrincipal UserPrincipal principal) {
-        UUID wid = principal.getWarehouseId();
+            @AuthenticationPrincipal UserPrincipal principal,
+            @RequestParam(required = false) UUID warehouseId) {
+        
+        UUID wid = (principal.getRole() == User.UserRole.ROLE_ADMIN) && warehouseId != null 
+                ? warehouseId : principal.getWarehouseId();
+                
         return ResponseEntity.ok(ApiResponse.ok(orderService.getPendingOrders(wid)));
     }
 
-    /** GET /orders/{id} — Chi tiết đơn hàng */
     @GetMapping("/{id}")
     @PreAuthorize("hasAnyRole('CASHIER','MANAGER','ADMIN')")
     public ResponseEntity<ApiResponse<OrderResponse>> getOrder(@PathVariable UUID id) {
         return ResponseEntity.ok(ApiResponse.ok(orderService.getOrderDetail(id)));
     }
 
-    /** PATCH /orders/{id}/status — Cập nhật trạng thái */
     @PatchMapping("/{id}/status")
-    @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
+    @PreAuthorize("hasAnyRole('CASHIER','MANAGER','ADMIN')")
     public ResponseEntity<ApiResponse<OrderResponse>> updateStatus(
             @PathVariable UUID id,
             @RequestBody Map<String, String> body,
@@ -92,6 +94,7 @@ public class OrderController {
         OrderResponse updated = orderService.updateStatus(
                 id, newStatus, note, trackingCode, shippingProvider,
                 principal.getId().toString());
+
         return ResponseEntity.ok(ApiResponse.ok("Cập nhật trạng thái thành công", updated));
     }
 }

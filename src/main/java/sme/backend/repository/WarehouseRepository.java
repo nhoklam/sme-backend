@@ -18,4 +18,7 @@ public interface WarehouseRepository extends JpaRepository<Warehouse, UUID> {
     boolean existsByCode(String code);
 
     List<Warehouse> findByProvinceCodeAndIsActiveTrue(String provinceCode);
+
+    // BỔ SUNG: Tìm tất cả các kho do một người cụ thể làm quản lý
+    List<Warehouse> findByManagerIdAndIsActiveTrue(UUID managerId);
 }

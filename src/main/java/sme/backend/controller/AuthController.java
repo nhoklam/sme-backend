@@ -72,12 +72,7 @@ public class AuthController {
 
     // ── User Management (ADMIN only) ──────────────────────────
 
-    /** GET /auth/users */
-    @GetMapping("/users")
-    @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<ApiResponse<List<UserResponse>>> getAllUsers() {
-        return ResponseEntity.ok(ApiResponse.ok(authService.getAllUsers()));
-    }
+
 
     /** POST /auth/users */
     @PostMapping("/users")
@@ -100,5 +95,23 @@ public class AuthController {
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<ApiResponse<UserResponse>> deactivateUser(@PathVariable UUID id) {
         return ResponseEntity.ok(ApiResponse.ok(authService.toggleUserActive(id, false)));
+    }
+    /** GET /auth/users */
+    @GetMapping("/users")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<List<UserResponse>>> getAllUsers(
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String role,
+            @RequestParam(required = false) UUID warehouseId) {
+        return ResponseEntity.ok(ApiResponse.ok(authService.searchUsers(keyword, role, warehouseId)));
+    }
+
+    /** PUT /auth/users/{id} */
+    @PutMapping("/users/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<UserResponse>> updateUser(
+            @PathVariable UUID id, 
+            @RequestBody CreateUserRequest req) {
+        return ResponseEntity.ok(ApiResponse.ok(authService.updateUser(id, req)));
     }
 }

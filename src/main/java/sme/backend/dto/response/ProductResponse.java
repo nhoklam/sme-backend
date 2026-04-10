@@ -5,17 +5,14 @@ import lombok.Data;
 
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.util.List;
 import java.util.UUID;
 
-// ─────────────────────────────────────────────────────────────
-// PRODUCT
-// ─────────────────────────────────────────────────────────────
 @Data @Builder
 public class ProductResponse {
     private UUID id;
     private UUID categoryId;
     private String categoryName;
+    private UUID supplierId; // ĐÃ BỔ SUNG TRƯỜNG NÀY
     private String isbnBarcode;
     private String sku;
     private String name;
@@ -28,6 +25,5 @@ public class ProductResponse {
     private BigDecimal weight;
     private Boolean isActive;
     private Instant createdAt;
-    // Tồn kho khả dụng - điền khi cần
     private Integer availableQuantity;
 }

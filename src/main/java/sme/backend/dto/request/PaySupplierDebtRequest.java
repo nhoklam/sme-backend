@@ -22,4 +22,5 @@ public class PaySupplierDebtRequest {
     private String fundType;    // CASH_111, BANK_112
 
     private String note;
+    private Boolean isActive;
 }

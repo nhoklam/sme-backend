@@ -2,6 +2,9 @@ package sme.backend.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.envers.Audited;
+import org.hibernate.envers.AuditTable;
+import org.hibernate.envers.NotAudited;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -11,6 +14,8 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "orders")
+@Audited
+@AuditTable("orders_audit") // <-- ĐÃ THÊM DÒNG NÀY ĐỂ ÉP HIBERNATE TÌM ĐÚNG BẢNG
 @Getter @Setter
 @NoArgsConstructor @AllArgsConstructor
 @Builder
@@ -67,7 +72,7 @@ public class Order extends BaseEntity {
     private BigDecimal finalAmount = BigDecimal.ZERO;
 
     @Column(name = "payment_method", nullable = false, length = 50)
-    private String paymentMethod; // COD, VNPAY, CREDIT_CARD, MOMO
+    private String paymentMethod;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "payment_status", nullable = false, length = 50)
@@ -78,7 +83,7 @@ public class Order extends BaseEntity {
     private String trackingCode;
 
     @Column(name = "shipping_provider", length = 50)
-    private String shippingProvider; // GHTK, VIETTEL_POST, GHN
+    private String shippingProvider;
 
     @Column(name = "cod_reconciled")
     @Builder.Default
@@ -96,26 +101,22 @@ public class Order extends BaseEntity {
     @Column(name = "cancelled_reason", columnDefinition = "TEXT")
     private String cancelledReason;
 
+    @NotAudited // Không track lịch sử của list items con
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default
     private List<OrderItem> items = new ArrayList<>();
 
+    @NotAudited // Không track lịch sử của list status con
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default
     private List<OrderStatusHistory> statusHistory = new ArrayList<>();
 
     public enum OrderStatus {
-        PENDING,    // Chờ xử lý
-        PACKING,    // Đang đóng gói
-        SHIPPING,   // Đang vận chuyển
-        DELIVERED,  // Đã giao
-        CANCELLED,  // Đã hủy
-        RETURNED    // Hoàn trả
+        PENDING, PACKING, SHIPPING, DELIVERED, CANCELLED, RETURNED
     }
 
     public enum OrderType {
-        DELIVERY,   // Giao tận nhà
-        BOPIS       // Buy Online Pick Up In Store
+        DELIVERY, BOPIS
     }
 
     public enum PaymentStatus {
@@ -132,17 +133,16 @@ public class Order extends BaseEntity {
         history.setOrder(this);
     }
 
-    /**
-     * Chuyển trạng thái đơn hàng với validation luồng hợp lệ
-     */
     public void transitionTo(OrderStatus newStatus, String note, String changedBy) {
         validateTransition(this.status, newStatus);
+        
         OrderStatusHistory history = OrderStatusHistory.builder()
                 .oldStatus(this.status.name())
                 .newStatus(newStatus.name())
                 .note(note)
                 .changedBy(changedBy)
                 .build();
+                
         this.status = newStatus;
         this.addStatusHistory(history);
     }
@@ -155,6 +155,7 @@ public class Order extends BaseEntity {
             case DELIVERED -> to == OrderStatus.RETURNED;
             default        -> false;
         };
+        
         if (!valid) {
             throw new IllegalStateException(
                     String.format("Không thể chuyển trạng thái từ %s sang %s", from, to)

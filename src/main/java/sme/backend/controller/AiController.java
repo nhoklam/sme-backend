@@ -9,9 +9,12 @@ import org.springframework.web.multipart.MultipartFile;
 import sme.backend.ai.AiService;
 import sme.backend.dto.response.ApiResponse;
 import sme.backend.security.UserPrincipal;
+import sme.backend.entity.KnowledgeDocument;
 
 import java.io.IOException;
 import java.util.Map;
+import java.util.List;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/ai")
@@ -42,7 +45,23 @@ public class AiController {
         String reply = aiService.chat(message, principal.getId(), history);
         return ResponseEntity.ok(ApiResponse.ok(Map.of("reply", reply)));
     }
+    @GetMapping("/documents")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<List<KnowledgeDocument>>> getAllDocuments() {
+        return ResponseEntity.ok(ApiResponse.ok(aiService.getAllDocuments()));
+    }
 
+    @DeleteMapping("/documents/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<Void>> deleteDocument(@PathVariable UUID id) {
+        aiService.deleteDocument(id);
+        return ResponseEntity.ok(ApiResponse.ok("Đã xóa tài liệu và làm sạch dữ liệu AI", null));
+    }
+    @GetMapping("/documents/{id}/chunks")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<List<String>>> getDocumentChunks(@PathVariable UUID id) {
+        return ResponseEntity.ok(ApiResponse.ok(aiService.getDocumentChunks(id)));
+    }
     /**
      * POST /ai/documents — SYS-03: Upload tài liệu RAG
      * Hỗ trợ: PDF, DOCX, PPTX, TXT

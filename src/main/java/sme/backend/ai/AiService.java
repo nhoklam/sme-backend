@@ -1,5 +1,6 @@
 package sme.backend.ai;
 
+import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -12,7 +13,9 @@ import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import sme.backend.config.AppProperties;
+import sme.backend.entity.KnowledgeDocument;
 import sme.backend.entity.User;
+import sme.backend.repository.KnowledgeDocumentRepository;
 import sme.backend.repository.UserRepository;
 
 import java.time.Instant;
@@ -37,6 +40,8 @@ public class AiService {
     private final VectorStore vectorStore;
     private final AppProperties appProperties;
     private final UserRepository userRepository;
+    private final KnowledgeDocumentRepository documentRepository;
+    private final EntityManager entityManager;
 
     // ─────────────────────────────────────────────────────────
     // SYS-03: UPLOAD & INDEX DOCUMENT
@@ -45,18 +50,33 @@ public class AiService {
     public int indexDocument(Resource fileResource, String documentTitle, UUID uploadedBy) {
         log.info("Indexing document: {}", documentTitle);
 
-        // 1. Extract text với Apache Tika (hỗ trợ PDF, DOCX, PPTX...)
+        String fileName = fileResource.getFilename() != null ? fileResource.getFilename() : "unknown.txt";
+        String fileExtension = fileName.contains(".") ? fileName.substring(fileName.lastIndexOf(".") + 1) : "txt";
+
+        // 1. Lưu thông tin file vào DB trước để lấy ID
+        KnowledgeDocument docRecord = KnowledgeDocument.builder()
+                .title(documentTitle)
+                .fileName(fileName)
+                .fileType(fileExtension)
+                .uploadedByUserId(uploadedBy)
+                .isActive(true)
+                .build();
+        docRecord = documentRepository.save(docRecord);
+        final String docIdStr = docRecord.getId().toString();
+
+        // 2. Extract text với Apache Tika (hỗ trợ PDF, DOCX, PPTX...)
         TikaDocumentReader reader = new TikaDocumentReader(fileResource);
         List<Document> rawDocs = reader.get();
 
-        // 2. Thêm metadata để RAG có thể lọc
+        // 3. Thêm metadata để RAG có thể lọc (Gắn ID tài liệu vào Metadata)
         rawDocs.forEach(doc -> {
+            doc.getMetadata().put("documentId", docIdStr);
             doc.getMetadata().put("source", documentTitle);
             doc.getMetadata().put("uploadedBy", uploadedBy.toString());
             doc.getMetadata().put("indexedAt", Instant.now().toString());
         });
 
-        // 3. Chunking: chia nhỏ văn bản
+        // 4. Chunking: chia nhỏ văn bản
         TokenTextSplitter splitter = TokenTextSplitter.builder()
                 .withChunkSize(appProperties.getAi().getChunkSize())
                 .withMinChunkSizeChars(100)
@@ -66,11 +86,35 @@ public class AiService {
                 .build();
         List<Document> chunks = splitter.apply(rawDocs);
 
-        // 4. Vector hóa + lưu vào pgvector
+        // 5. Vector hóa + lưu vào pgvector
         vectorStore.add(chunks);
 
         log.info("Document indexed: {} chunks from '{}'", chunks.size(), documentTitle);
         return chunks.size();
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // GET ALL DOCUMENTS
+    // ─────────────────────────────────────────────────────────
+    public List<KnowledgeDocument> getAllDocuments() {
+        List<KnowledgeDocument> docs = documentRepository.findAllByOrderByCreatedAtDesc();
+        docs.forEach(d -> d.setChunkCount(documentRepository.countChunksByDocumentId(d.getId())));
+        return docs;
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // DELETE DOCUMENT
+    // ─────────────────────────────────────────────────────────
+    @Transactional
+    public void deleteDocument(UUID documentId) {
+        // Xóa các vector nhúng trong pgvector (trực tiếp qua SQL Native)
+        entityManager.createNativeQuery("DELETE FROM vector_store WHERE metadata->>'documentId' = :docId")
+                .setParameter("docId", documentId.toString())
+                .executeUpdate();
+
+        // Xóa bản ghi trong bảng quản lý
+        documentRepository.deleteById(documentId);
+        log.info("Deleted document and its vectors: {}", documentId);
     }
 
     // ─────────────────────────────────────────────────────────
@@ -91,7 +135,6 @@ public class AiService {
         );
 
         // 2. Nối nội dung các chunk tìm được thành chuỗi Context
-        // ĐÃ SỬA LỖI Ở ĐÂY: Sử dụng getFormattedContent() thay vì getContent()
         String context = similarDocuments.stream()
                 .map(Document::getFormattedContent) 
                 .collect(Collectors.joining("\n---\n"));
@@ -123,7 +166,20 @@ public class AiService {
                         .build()
         );
     }
-
+// ─────────────────────────────────────────────────────────
+    // LẤY CHI TIẾT CÁC CHUNKS CỦA TÀI LIỆU
+    // ─────────────────────────────────────────────────────────
+    public List<String> getDocumentChunks(UUID documentId) {
+        // Dùng Native Query truy vấn trực tiếp vào bảng vector_store
+        @SuppressWarnings("unchecked")
+        List<String> chunks = entityManager.createNativeQuery(
+                "SELECT content FROM vector_store WHERE metadata->>'documentId' = :docId"
+        )
+        .setParameter("docId", documentId.toString())
+        .getResultList();
+        
+        return chunks;
+    }
     // ─────────────────────────────────────────────────────────
     // PRIVATE HELPERS
     // ─────────────────────────────────────────────────────────

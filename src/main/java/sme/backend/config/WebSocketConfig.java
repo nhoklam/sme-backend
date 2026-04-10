@@ -6,27 +6,21 @@ import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBr
 import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
 import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
 
-/**
- * WebSocket STOMP - dùng để push real-time notifications:
- * - Tồn kho thấp → /topic/warehouse/{id}/low-stock
- * - Đơn hàng mới → /topic/warehouse/{id}/new-order
- * - Ca chờ duyệt → /topic/warehouse/{id}/shift-alert
- */
 @Configuration
 @EnableWebSocketMessageBroker
 public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
-        registry.addEndpoint("/ws")
-                .setAllowedOriginPatterns("*")
-                .withSockJS();     // SockJS fallback cho các trình duyệt cũ
+        // Khai báo cả 2 đường dẫn để Frontend dễ dàng kết nối
+        // LƯU Ý: KHÔNG thêm .withSockJS() ở cuối vì Frontend đang dùng chuẩn Raw WebSocket
+        registry.addEndpoint("/ws", "/api/ws")
+                .setAllowedOriginPatterns("*"); 
     }
 
     @Override
     public void configureMessageBroker(MessageBrokerRegistry registry) {
-        registry.enableSimpleBroker("/topic", "/queue");
         registry.setApplicationDestinationPrefixes("/app");
-        registry.setUserDestinationPrefix("/user");  // Gửi đến user cụ thể
+        registry.enableSimpleBroker("/topic", "/queue");
     }
 }

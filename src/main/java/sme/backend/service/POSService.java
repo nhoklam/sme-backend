@@ -133,11 +133,15 @@ public class POSService {
         BigDecimal discountAmount = BigDecimal.ZERO;
         int pointsToUse = req.getPointsToUse() != null ? req.getPointsToUse() : 0;
         if (pointsToUse > 0 && customer != null) {
-            customer.deductPoints(pointsToUse);  // throws nếu không đủ điểm
-            // 1 điểm = 1000đ giảm giá (configurable)
+            if (pointsToUse % 500 != 0) {
+                throw new BusinessException("INVALID_POINTS", "Chỉ có thể quy đổi điểm theo mốc voucher 500 điểm.");
+            }
+            customer.deductPoints(pointsToUse); 
+            
+            // SỬ DỤNG BIẾN REDEEM VALUE MỚI (1 điểm = 100đ)
             discountAmount = BigDecimal.valueOf(pointsToUse)
                     .multiply(BigDecimal.valueOf(
-                            appProperties.getBusiness().getLoyaltyPointsPerVnd()));
+                            appProperties.getBusiness().getLoyaltyPointsRedeemValue()));
             if (discountAmount.compareTo(totalAmount) > 0) {
                 discountAmount = totalAmount; // không giảm quá tổng bill
             }

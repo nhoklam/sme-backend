@@ -28,4 +28,15 @@ public interface SupplierRepository extends JpaRepository<Supplier, UUID> {
         ORDER BY s.name
         """)
     Page<Supplier> searchByName(@Param("kw") String keyword, Pageable pageable);
+
+    // ĐÃ BỔ SUNG: Tìm kiếm tất cả (cả khóa và không khóa), tìm đa trường để hỗ trợ Server-side Pagination
+    @Query("""
+        SELECT s FROM Supplier s
+        WHERE (:kw IS NULL OR :kw = '' 
+           OR LOWER(s.name) LIKE LOWER(CONCAT('%', :kw, '%'))
+           OR LOWER(s.taxCode) LIKE LOWER(CONCAT('%', :kw, '%'))
+           OR LOWER(s.phone) LIKE LOWER(CONCAT('%', :kw, '%'))
+           OR LOWER(s.email) LIKE LOWER(CONCAT('%', :kw, '%')))
+        """)
+    Page<Supplier> searchAllByKeyword(@Param("kw") String keyword, Pageable pageable);
 }

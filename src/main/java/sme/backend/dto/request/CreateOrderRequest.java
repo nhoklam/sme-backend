@@ -21,7 +21,7 @@ public class CreateOrderRequest {
     @NotBlank private String paymentMethod;
     private String type;     // DELIVERY (default) | BOPIS
     private String note;
-
+    private UUID assignedWarehouseId;
     @Data
     public static class OrderItemRequest {
         @NotNull private UUID productId;

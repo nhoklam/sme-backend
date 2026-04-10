@@ -2,6 +2,8 @@ package sme.backend.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.envers.Audited;
+import org.hibernate.envers.AuditTable;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -9,6 +11,8 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "products")
+@Audited
+@AuditTable("products_audit") // <-- THÊM DÒNG NÀY
 @Getter @Setter
 @NoArgsConstructor @AllArgsConstructor
 @Builder
@@ -20,10 +24,6 @@ public class Product extends BaseEntity {
     @Column(name = "supplier_id")
     private UUID supplierId;
 
-    /**
-     * ISBN-13 hoặc barcode tùy chỉnh.
-     * Đây là key chính để quét mã vạch tại POS.
-     */
     @Column(name = "isbn_barcode", unique = true, nullable = false, length = 50)
     private String isbnBarcode;
 
@@ -42,11 +42,6 @@ public class Product extends BaseEntity {
     @Column(name = "wholesale_price", precision = 19, scale = 4)
     private BigDecimal wholesalePrice;
 
-    /**
-     * MAC (Moving Average Cost) - Giá vốn bình quân gia quyền.
-     * KHÔNG bao giờ tự cập nhật trực tiếp.
-     * Phải gọi recalculateMAC() sau mỗi lần nhập hàng.
-     */
     @Column(name = "mac_price", precision = 19, scale = 4)
     @Builder.Default
     private BigDecimal macPrice = BigDecimal.ZERO;
@@ -59,23 +54,19 @@ public class Product extends BaseEntity {
     private String unit = "Cuốn";
 
     @Column(precision = 10, scale = 2)
-    private BigDecimal weight;      // Gram
+    private BigDecimal weight;
 
     @Column(name = "is_active")
     @Builder.Default
     private Boolean isActive = true;
 
-    /**
-     * Tính lại giá vốn bình quân sau khi nhập thêm hàng.
-     * Công thức: MAC_mới = (Tồn_hiện_tại * MAC_cũ + Qty_nhập * Giá_nhập) / (Tồn + Qty_nhập)
-     *
-     * @param currentQty    Tồn kho hiện tại trước khi nhập
-     * @param importQty     Số lượng nhập thêm
-     * @param importPrice   Giá nhập của lô hàng mới
-     */
     public void recalculateMAC(int currentQty, int importQty, BigDecimal importPrice) {
         if (importQty <= 0) return;
 
+        if (this.macPrice == null) {
+            this.macPrice = BigDecimal.ZERO;
+        }
+        
         BigDecimal totalExistingValue = this.macPrice.multiply(BigDecimal.valueOf(currentQty));
         BigDecimal totalNewValue = importPrice.multiply(BigDecimal.valueOf(importQty));
         BigDecimal totalQty = BigDecimal.valueOf((long) currentQty + importQty);

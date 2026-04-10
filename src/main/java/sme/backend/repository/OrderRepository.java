@@ -22,7 +22,7 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     // Đơn hàng mới đổ vào kho (PACKING queue)
     @Query("""
         SELECT o FROM Order o
-        WHERE o.assignedWarehouseId = :wid
+        WHERE (:wid IS NULL OR o.assignedWarehouseId = :wid)
         AND o.status IN ('PENDING','PACKING')
         ORDER BY o.createdAt ASC
         """)
@@ -56,10 +56,26 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     List<Order> findByAssignedWarehouseIdIsNullAndStatus(Order.OrderStatus status);
 
     @Query("""
-        SELECT o FROM Order o
+        SELECT DISTINCT o FROM Order o
         LEFT JOIN FETCH o.items
-        LEFT JOIN FETCH o.statusHistory
         WHERE o.id = :id
         """)
     Optional<Order> findByIdWithDetails(@Param("id") UUID id);
+
+// SỬA HÀM NÀY: Thêm tham số keyword và logic LIKE tìm kiếm
+    @Query("""
+        SELECT o FROM Order o
+        WHERE (:warehouseId IS NULL OR o.assignedWarehouseId = :warehouseId)
+        AND (:status IS NULL OR o.status = :status)
+        AND (:keyword IS NULL OR :keyword = ''
+             OR LOWER(o.code) LIKE LOWER(CONCAT('%', :keyword, '%'))
+             OR LOWER(o.shippingPhone) LIKE LOWER(CONCAT('%', :keyword, '%'))
+             OR LOWER(o.shippingName) LIKE LOWER(CONCAT('%', :keyword, '%'))
+             )
+        ORDER BY o.createdAt DESC
+        """)
+    Page<Order> searchOrders(@Param("warehouseId") UUID warehouseId,
+                             @Param("status") Order.OrderStatus status,
+                             @Param("keyword") String keyword,
+                             Pageable pageable);
 }

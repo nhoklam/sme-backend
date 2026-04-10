@@ -1,8 +1,8 @@
 package sme.backend.dto.response;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.Builder;
 import lombok.Data;
-import sme.backend.entity.User;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -19,4 +19,7 @@ public class UserResponse {
     private String warehouseName;
     private Boolean isActive;
     private Instant createdAt;
+    
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private Instant lastLoginAt;
 }

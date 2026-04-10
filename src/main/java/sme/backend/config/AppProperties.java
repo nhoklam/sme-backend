@@ -28,6 +28,7 @@ public class AppProperties {
         private int lowStockThreshold = 10;
         private int deadStockDays = 90;
         private int loyaltyPointsPerVnd = 1000;
+        private int loyaltyPointsRedeemValue = 100;
         private int silverThreshold = 500;
         private int goldThreshold = 2000;
     }

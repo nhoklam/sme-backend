@@ -3,6 +3,7 @@ package sme.backend.controller;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -12,6 +13,7 @@ import sme.backend.dto.request.CreatePurchaseOrderRequest;
 import sme.backend.dto.response.ApiResponse;
 import sme.backend.dto.response.PageResponse;
 import sme.backend.entity.PurchaseOrder;
+import sme.backend.entity.User;
 import sme.backend.security.UserPrincipal;
 import sme.backend.service.PurchaseService;
 
@@ -24,7 +26,6 @@ public class PurchaseController {
 
     private final PurchaseService purchaseService;
 
-    /** POST /purchase-orders */
     @PostMapping
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
     public ResponseEntity<ApiResponse<PurchaseOrder>> create(
@@ -35,7 +36,6 @@ public class PurchaseController {
                         purchaseService.createPurchaseOrder(req, principal.getId())));
     }
 
-    /** POST /purchase-orders/{id}/approve */
     @PostMapping("/{id}/approve")
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
     public ResponseEntity<ApiResponse<PurchaseOrder>> approve(
@@ -45,7 +45,6 @@ public class PurchaseController {
                 purchaseService.approvePurchaseOrder(id, principal.getId())));
     }
 
-    /** POST /purchase-orders/{id}/cancel */
     @PostMapping("/{id}/cancel")
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
     public ResponseEntity<ApiResponse<PurchaseOrder>> cancel(
@@ -55,20 +54,37 @@ public class PurchaseController {
         return ResponseEntity.ok(ApiResponse.ok(purchaseService.cancelPurchaseOrder(id, reason)));
     }
 
-    /** GET /purchase-orders */
+    // ĐÃ SỬA LỖI CHÍNH Ở ĐÂY
     @GetMapping
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
     public ResponseEntity<ApiResponse<PageResponse<PurchaseOrder>>> getAll(
             @AuthenticationPrincipal UserPrincipal principal,
+            @RequestParam(required = false) UUID warehouseId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-        UUID wid = principal.getWarehouseId();
+        
+        // 1. Xử lý logic Admin (xem tất cả hoặc xem theo bộ lọc), Manager (chỉ xem kho của mình)
+        UUID wid = (principal.getRole() == User.UserRole.ROLE_ADMIN) && warehouseId != null 
+                ? warehouseId : principal.getWarehouseId();
+
+        // 2. Thêm Sort.by để đảm bảo phiếu mới nhất luôn hiện lên trên cùng cho Admin
         return ResponseEntity.ok(ApiResponse.ok(
                 PageResponse.of(purchaseService.getByWarehouse(
-                        wid, PageRequest.of(page, size)))));
+                        wid, PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"))))));
     }
 
-    /** GET /purchase-orders/{id} */
+    @GetMapping("/supplier/{supplierId}")
+    @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
+    public ResponseEntity<ApiResponse<PageResponse<PurchaseOrder>>> getBySupplier(
+            @PathVariable UUID supplierId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        // Tương tự, sắp xếp giảm dần cho lịch sử NCC
+        return ResponseEntity.ok(ApiResponse.ok(
+                PageResponse.of(purchaseService.getBySupplier(
+                        supplierId, PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"))))));
+    }
+
     @GetMapping("/{id}")
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
     public ResponseEntity<ApiResponse<PurchaseOrder>> getOne(@PathVariable UUID id) {

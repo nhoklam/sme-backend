@@ -29,4 +29,7 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     @Query("SELECT u FROM User u WHERE u.warehouseId = :wid " +
            "AND u.role = 'ROLE_CASHIER' AND u.isActive = true")
     List<User> findActiveCashiersByWarehouse(@Param("wid") UUID warehouseId);
+
+
+
 }

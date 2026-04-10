@@ -66,6 +66,51 @@ public class TransferService {
         return transferRepository.save(transfer);
     }
 
+    // ĐÃ THÊM: Cập nhật phiếu chuyển kho (Chỉ áp dụng cho trạng thái DRAFT)
+    @Transactional
+    public InternalTransfer updateTransfer(UUID transferId, UUID toWarehouseId,
+                                           List<TransferItemRequest> items,
+                                           String note, UUID updatedBy) {
+        
+        InternalTransfer transfer = transferRepository.findByIdWithItems(transferId)
+                .orElseThrow(() -> new ResourceNotFoundException("Transfer", transferId));
+
+        if (transfer.getStatus() != InternalTransfer.TransferStatus.DRAFT) {
+            throw new BusinessException("INVALID_STATUS", "Chỉ có thể sửa phiếu ở trạng thái DRAFT");
+        }
+        if (transfer.getFromWarehouseId().equals(toWarehouseId)) {
+            throw new BusinessException("SAME_WAREHOUSE", "Kho nguồn và kho đích không thể giống nhau");
+        }
+
+        // Validate tồn kho cho items mới
+        for (TransferItemRequest item : items) {
+            Inventory inv = inventoryRepository
+                    .findByProductIdAndWarehouseId(item.productId(), transfer.getFromWarehouseId())
+                    .orElseThrow(() -> new BusinessException("NO_INVENTORY",
+                            "Không tìm thấy tồn kho sản phẩm: " + item.productId()));
+
+            if (inv.getAvailableQuantity() < item.quantity()) {
+                throw new BusinessException("INSUFFICIENT_STOCK",
+                        "Không đủ hàng để chuyển. Khả dụng: " + inv.getAvailableQuantity());
+            }
+        }
+
+        // Cập nhật thông tin cơ bản
+        transfer.setToWarehouseId(toWarehouseId);
+        transfer.setNote(note);
+
+        // Cập nhật danh sách items (Xóa cũ, thêm mới để JPA tự động map cascade)
+        transfer.getItems().clear();
+        items.forEach(i -> transfer.addItem(
+                TransferItem.builder()
+                        .productId(i.productId())
+                        .quantity(i.quantity())
+                        .build()
+        ));
+
+        return transferRepository.save(transfer);
+    }
+
     // Xuất kho: Kho nguồn trừ hàng, đánh dấu in_transit
     @Transactional
     public InternalTransfer dispatch(UUID transferId, UUID dispatchedBy) {
@@ -96,6 +141,7 @@ public class TransferService {
     }
 
     // Nhận hàng: Kho đích nhận hàng, in_transit giảm
+// Nhận hàng: Kho đích nhận hàng, in_transit giảm
     @Transactional
     public InternalTransfer receive(UUID transferId, UUID receivedBy) {
         InternalTransfer transfer = transferRepository.findByIdWithItems(transferId)
@@ -107,14 +153,12 @@ public class TransferService {
         }
 
         for (TransferItem item : transfer.getItems()) {
-            // Cộng kho đích
             Inventory destInv = inventoryService.getOrCreate(
                     item.getProductId(), transfer.getToWarehouseId());
-            destInv.receiveTransfer(0);   // in_transit đã trừ tại kho nguồn
+            destInv.receiveTransfer(0);   
             destInv.addQuantity(item.getQuantity());
             inventoryRepository.save(destInv);
 
-            // Giảm in_transit tại kho nguồn
             inventoryRepository.findByProductIdAndWarehouseId(
                     item.getProductId(), transfer.getFromWarehouseId())
                     .ifPresent(srcInv -> {
@@ -131,13 +175,39 @@ public class TransferService {
         transfer = transferRepository.save(transfer);
 
         log.info("Transfer received: {}", transfer.getCode());
+        
+        // ---- ĐÃ THÊM: Báo ngược lại cho KHO XUẤT biết là hàng đã tới nơi an toàn! ----
+        notificationService.notifyTransferArrived(transfer.getId(), transfer.getFromWarehouseId());
+        
         return transfer;
     }
 
     @Transactional(readOnly = true)
-    public Page<InternalTransfer> getByWarehouse(UUID warehouseId, Pageable pageable) {
-        return transferRepository.findByFromWarehouseIdOrToWarehouseIdOrderByCreatedAtDesc(
-                warehouseId, warehouseId, pageable);
+    public Page<InternalTransfer> searchTransfers(UUID warehouseId, String statusStr, String keyword, Pageable pageable) {
+        InternalTransfer.TransferStatus status = null;
+        if (statusStr != null && !statusStr.isBlank()) {
+            try {
+                status = InternalTransfer.TransferStatus.valueOf(statusStr.toUpperCase());
+            } catch (IllegalArgumentException ignored) {}
+        }
+        
+        String kw = (keyword == null) ? "" : keyword.trim();
+
+        if (warehouseId == null) {
+            // Dành cho ADMIN
+            if (status == null) {
+                return transferRepository.searchAllTransfers(kw, pageable);
+            } else {
+                return transferRepository.searchAllTransfersWithStatus(status, kw, pageable);
+            }
+        } else {
+            // Dành cho MANAGER
+            if (status == null) {
+                return transferRepository.searchTransfersByWarehouse(warehouseId, kw, pageable);
+            } else {
+                return transferRepository.searchTransfersByWarehouseWithStatus(warehouseId, status, kw, pageable);
+            }
+        }
     }
 
     @Transactional(readOnly = true)
