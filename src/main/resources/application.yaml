@@ -1,0 +1,203 @@
+server:
+  port: ${PORT:8080}
+  servlet:
+    context-path: /api
+
+spring:
+  application:
+    name: sme-backend
+
+  # ========================
+  # DATABASE (PostgreSQL)
+  # ========================
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/sme_erp_pos?sslmode=disable}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      pool-name: SME-HikariPool
+
+  # ========================
+  # JPA / HIBERNATE
+  # ========================
+  jpa:
+    hibernate:
+      ddl-auto: validate         # Flyway quản lý schema, Hibernate chỉ validate
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        jdbc:
+          time_zone: Asia/Ho_Chi_Minh
+          batch_size: 50
+        order_inserts: true
+        order_updates: true
+        envers:
+          audit_table_suffix: _audit
+          store_data_at_delete: true
+
+  # ========================
+  # FLYWAY (Database Migration)
+  # ========================
+  flyway:
+    enabled: false
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+    schemas: public
+
+  # ========================
+  # REDIS
+  # ========================
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      ssl:
+        enabled: ${REDIS_SSL:false}
+      timeout: 2000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 2
+
+  # ========================
+  # SPRING BATCH
+  # ========================
+  batch:
+    job:
+      enabled: false             # Tắt auto-run khi khởi động
+    jdbc:
+      initialize-schema: always  # Tạo schema batch tự động
+
+  # ========================
+  # SPRING AI - Dùng Gemini qua chuẩn OpenAI
+  # ========================
+  ai:
+    openai:
+      api-key: ${GEMINI_API_KEY:}
+      base-url: https://generativelanguage.googleapis.com/v1beta/openai/
+      chat:
+        completions-path: /chat/completions  
+        options:
+          model: gemini-2.5-flash
+          temperature: 0.25
+      embedding:
+        embeddings-path: /embeddings         
+        options:
+          model: gemini-embedding-001 
+          dimensions: 768
+    vectorstore:
+      pgvector:
+        index-type: HNSW
+        distance-type: COSINE_DISTANCE
+        dimensions: 768           # Gemini embedding dimensions
+        initialize-schema: false  # Flyway quản lý
+
+cloudinary:
+  cloud-name: ${CLOUDINARY_CLOUD_NAME:}
+  api-key: ${CLOUDINARY_API_KEY:}
+  api-secret: ${CLOUDINARY_API_SECRET:}
+
+# ========================
+# WEBSOCKET (STOMP)
+# ========================
+websocket:
+  message-broker:
+    application-destination-prefix: /app
+    simple-broker-destination-prefix: /topic,/queue
+
+# ========================
+# EMAIL (Spring Mail)
+# ========================
+spring.mail:
+  host: smtp.gmail.com
+  port: 587
+  username: ${MAIL_USERNAME:}
+  password: ${MAIL_PASSWORD:}
+  properties:
+    mail:
+      smtp:
+        auth: true
+        starttls:
+          enable: true
+
+# ========================
+# FILE UPLOAD
+# ========================
+spring.servlet:
+  multipart:
+    enabled: true
+    max-file-size: 50MB
+    max-request-size: 50MB
+
+# ========================
+# APPLICATION CUSTOM CONFIG
+# ========================
+app:
+  # JWT Settings
+  jwt:
+    secret: ${JWT_SECRET:local_secret_key_change_in_production_environment}
+    expiration-ms: 86400000      # 24 giờ
+    refresh-expiration-ms: 604800000  # 7 ngày
+
+  # CORS
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173}
+    allowed-methods: "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+    allowed-headers: "*"
+    allow-credentials: true
+
+  # Business Logic
+  business:
+    low-stock-threshold: 10       
+    dead-stock-days: 90           
+    loyalty-points-per-vnd: 1000  
+    loyalty-points-redeem-value: 100
+    silver-threshold: 500         
+    gold-threshold: 2000          
+
+  # File Storage (Local / S3)
+  storage:
+    type: local                   
+    local-path: ./uploads
+    base-url: http://localhost:8080/api/files
+
+  # AI RAG
+  ai:
+    chunk-size: 800
+    chunk-overlap: 100
+    top-k-results: 5
+
+# ========================
+# LOGGING
+# ========================
+logging:
+  level:
+    root: INFO
+    sme.backend: DEBUG
+    org.springframework.security: INFO
+    org.hibernate.SQL: INFO
+    org.springframework.ai: INFO
+  pattern:
+    console: "%clr(%d{HH:mm:ss.SSS}){faint} %clr(${LOG_LEVEL_PATTERN:-%5p}) %clr([%15.15t]){faint} %clr(%-40.40logger{39}){cyan} %clr(:){faint} %m%n"
+
+# ========================
+# MANAGEMENT (Actuator)
+# ========================
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized

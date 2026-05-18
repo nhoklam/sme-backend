@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8"/>
+    <title>Hóa đơn bán hàng</title>
+    <style>
+        body { font-family: 'Arial Unicode MS', 'DejaVu Sans', sans-serif; font-size: 12px; margin: 0; padding: 20px; }
+        .header { text-align: center; margin-bottom: 30px; }
+        .header h1 { margin: 0; color: #1a1a2e; text-transform: uppercase; }
+        .info { margin-bottom: 20px; width: 100%; border-collapse: collapse; }
+        .info td { padding: 5px 0; vertical-align: top; }
+        .items-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        .items-table th { background-color: #f8f9fb; border-bottom: 2px solid #1a1a2e; padding: 10px; text-align: left; }
+        .items-table td { border-bottom: 1px solid #eee; padding: 10px; }
+        .totals { margin-top: 30px; float: right; width: 250px; }
+        .totals-row { display: flex; justify-content: space-between; padding: 5px 0; }
+        .totals-row.grand-total { border-top: 2px solid #1a1a2e; margin-top: 10px; padding-top: 10px; font-weight: bold; font-size: 14px; }
+        .footer { margin-top: 100px; text-align: center; color: #888; font-style: italic; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Hóa đơn bán hàng</h1>
+        <p th:text="'Mã hóa đơn: ' + ${invoice.code}">Mã hóa đơn: HĐ0001</p>
+        <p th:text="'Ngày lập: ' + ${#temporals.format(invoice.createdAt, 'dd/MM/yyyy HH:mm')}">Ngày lập: 01/01/2026</p>
+    </div>
+
+    <table class="info">
+        <tr>
+            <td width="50%">
+                <strong>THÔNG TIN KHÁCH HÀNG</strong><br/>
+                <span th:text="${invoice.customerName ?: 'Khách vãng lai'}">Khách vãng lai</span><br/>
+                <span th:text="${invoice.customerPhone ?: ''}"></span>
+            </td>
+            <td width="50%" style="text-align: right">
+                <strong>ĐƠN VỊ BÁN HÀNG</strong><br/>
+                <span>HỆ THỐNG QUẢN LÝ SME ERP</span><br/>
+                <span th:text="'Thu ngân: ' + ${invoice.cashierName}">Thu ngân: Admin</span>
+            </td>
+        </tr>
+    </table>
+
+    <table class="items-table">
+        <thead>
+            <tr>
+                <th>Sản phẩm</th>
+                <th style="text-align: center">SL</th>
+                <th style="text-align: right">Đơn giá</th>
+                <th style="text-align: right">Thành tiền</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr th:each="item : ${invoice.items}">
+                <td>
+                    <span th:text="${item.productName}" style="font-weight: bold;">Tên sản phẩm</span><br/>
+                    <small th:text="'SKU: ' + ${item.productSku}">SKU</small>
+                </td>
+                <td style="text-align: center" th:text="${item.quantity}">1</td>
+                <td style="text-align: right" th:text="${#numbers.formatDecimal(item.unitPrice, 0, 'POINT', 0, 'COMMA')} + ' ₫'">10.000 ₫</td>
+                <td style="text-align: right" th:text="${#numbers.formatDecimal(item.totalPrice, 0, 'POINT', 0, 'COMMA')} + ' ₫'">10.000 ₫</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div class="totals">
+        <div class="totals-row">
+            <span>Tổng cộng:</span>
+            <span style="float: right" th:text="${#numbers.formatDecimal(invoice.totalAmount, 0, 'POINT', 0, 'COMMA')} + ' ₫'">100.000 ₫</span>
+        </div>
+        <div class="totals-row" th:if="${invoice.discountAmount > 0}">
+            <span>Chiết khấu:</span>
+            <span style="float: right" th:text="'- ' + ${#numbers.formatDecimal(invoice.discountAmount, 0, 'POINT', 0, 'COMMA')} + ' ₫'">0 ₫</span>
+        </div>
+        <div class="totals-row grand-total">
+            <span>TỔNG THANH TOÁN:</span>
+            <span style="float: right" th:text="${#numbers.formatDecimal(invoice.finalAmount, 0, 'POINT', 0, 'COMMA')} + ' ₫'">100.000 ₫</span>
+        </div>
+    </div>
+
+    <div style="clear: both;"></div>
+
+    <div class="footer">
+        <p>Cảm ơn quý khách đã mua hàng!</p>
+        <p>Hóa đơn điện tử được tạo bởi hệ thống SME ERP</p>
+    </div>
+</body>
+</html>
