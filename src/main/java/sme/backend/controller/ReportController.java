@@ -42,19 +42,20 @@ public class ReportController {
             @RequestParam Instant to,
             @RequestParam(defaultValue = "day") String period,
             @RequestParam(required = false) UUID warehouseId,
-            @RequestParam(required = false) String paymentMethod) {
+            @RequestParam(required = false) String paymentMethod,
+            @RequestParam(required = false) UUID cashierId) {
 
         UUID wid = getEffectiveWarehouseId(principal, warehouseId);
 
         List<Map<String, Object>> result;
         if ("year".equalsIgnoreCase(period)) {
-            result = invoiceRepository.getRevenueReportYearly(wid, from, to, paymentMethod);
+            result = invoiceRepository.getRevenueReportYearly(wid, from, to, paymentMethod, cashierId);
         } else if ("month".equalsIgnoreCase(period)) {
-            result = invoiceRepository.getRevenueReportMonthly(wid, from, to, paymentMethod);
+            result = invoiceRepository.getRevenueReportMonthly(wid, from, to, paymentMethod, cashierId);
         } else if ("week".equalsIgnoreCase(period)) {
-            result = invoiceRepository.getRevenueReportWeekly(wid, from, to, paymentMethod);
+            result = invoiceRepository.getRevenueReportWeekly(wid, from, to, paymentMethod, cashierId);
         } else {
-            result = invoiceRepository.getRevenueReportDaily(wid, from, to, paymentMethod);
+            result = invoiceRepository.getRevenueReportDaily(wid, from, to, paymentMethod, cashierId);
         }
 
         return ResponseEntity.ok(ApiResponse.ok(result));
@@ -112,7 +113,7 @@ public class ReportController {
         Instant todayStart = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.DAYS);
         Instant todayEnd = todayStart.plus(1, java.time.temporal.ChronoUnit.DAYS);
 
-        List<Map<String, Object>> revenue = invoiceRepository.getRevenueReportDaily(wid, todayStart, todayEnd, null);
+        List<Map<String, Object>> revenue = invoiceRepository.getRevenueReportDaily(wid, todayStart, todayEnd, null, null);
 
         int lowStockCount = (wid != null) ? inventoryRepository.findLowStockByWarehouse(wid).size() : 0;
 

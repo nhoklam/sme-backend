@@ -8,6 +8,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 import sme.backend.entity.ProductReview;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -17,6 +18,8 @@ public interface ProductReviewRepository extends JpaRepository<ProductReview, UU
     Page<ProductReview> findByProductIdAndIsApprovedTrueOrderByCreatedAtDesc(UUID productId, Pageable pageable);
 
     boolean existsByProductIdAndCustomerIdAndOrderId(UUID productId, UUID customerId, UUID orderId);
+
+    List<ProductReview> findByProductIdInAndCustomerIdAndOrderId(java.util.List<UUID> productIds, UUID customerId, UUID orderId);
 
     Optional<ProductReview> findByProductIdAndCustomerIdAndOrderId(UUID productId, UUID customerId, UUID orderId);
 

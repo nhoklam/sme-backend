@@ -28,31 +28,35 @@ public class AuditLogService {
         // revtype: 0 = Thêm mới, 1 = Cập nhật, 2 = Xóa
         String sql = """
                     SELECT * FROM (
-                        SELECT 'Người dùng' as entity_name, id as entity_id, revtype,
-                               COALESCE(updated_by, created_by, 'SYSTEM') as changed_by,
-                               rev, COALESCE(updated_at, created_at) as changed_at
-                        FROM users_audit
+                        SELECT 'Người dùng' as entity_name, a.id as entity_id, a.revtype,
+                               COALESCE(a.updated_by, a.created_by, 'SYSTEM') as changed_by,
+                               a.rev, r.revtstmp as changed_at,
+                               a.full_name as target_name
+                        FROM users_audit a JOIN revinfo r ON a.rev = r.rev
 
                         UNION ALL
 
-                        SELECT 'Sản phẩm' as entity_name, id as entity_id, revtype,
-                               COALESCE(updated_by, created_by, 'SYSTEM') as changed_by,
-                               rev, COALESCE(updated_at, created_at) as changed_at
-                        FROM products_audit
+                        SELECT 'Sản phẩm' as entity_name, a.id as entity_id, a.revtype,
+                               COALESCE(a.updated_by, a.created_by, 'SYSTEM') as changed_by,
+                               a.rev, r.revtstmp as changed_at,
+                               a.name as target_name
+                        FROM products_audit a JOIN revinfo r ON a.rev = r.rev
 
                         UNION ALL
 
-                        SELECT 'Chi nhánh' as entity_name, id as entity_id, revtype,
-                               COALESCE(updated_by, created_by, 'SYSTEM') as changed_by,
-                               rev, COALESCE(updated_at, created_at) as changed_at
-                        FROM warehouses_audit
+                        SELECT 'Chi nhánh' as entity_name, a.id as entity_id, a.revtype,
+                               COALESCE(a.updated_by, a.created_by, 'SYSTEM') as changed_by,
+                               a.rev, r.revtstmp as changed_at,
+                               a.name as target_name
+                        FROM warehouses_audit a JOIN revinfo r ON a.rev = r.rev
 
                         UNION ALL
 
-                        SELECT 'Đơn hàng' as entity_name, id as entity_id, revtype,
-                               COALESCE(updated_by, created_by, 'SYSTEM') as changed_by,
-                               rev, COALESCE(updated_at, created_at) as changed_at
-                        FROM orders_audit
+                        SELECT 'Đơn hàng' as entity_name, a.id as entity_id, a.revtype,
+                               COALESCE(a.updated_by, a.created_by, 'SYSTEM') as changed_by,
+                               a.rev, r.revtstmp as changed_at,
+                               a.code as target_name
+                        FROM orders_audit a JOIN revinfo r ON a.rev = r.rev
                     ) AS combined_audit
                     WHERE changed_at IS NOT NULL
                     ORDER BY changed_at DESC
@@ -88,12 +92,27 @@ public class AuditLogService {
                     changedAt = ts.toInstant();
                 } else if (row[5] instanceof java.util.Date d) {
                     changedAt = d.toInstant();
+                } else if (row[5] instanceof java.time.LocalDateTime ldt) {
+                    changedAt = ldt.atZone(java.time.ZoneId.systemDefault()).toInstant();
+                } else if (row[5] instanceof java.time.Instant inst) {
+                    changedAt = inst;
+                } else if (row[5] instanceof java.time.OffsetDateTime odt) {
+                    changedAt = odt.toInstant();
+                } else if (row[5] instanceof Long l) {
+                    changedAt = Instant.ofEpochMilli(l);
+                } else if (row[5] instanceof Number n) {
+                    changedAt = Instant.ofEpochMilli(n.longValue());
+                } else {
+                    log.warn("Unknown timestamp type in getGlobalAuditLogs: {}", row[5].getClass().getName());
                 }
             }
+
+            String targetName = row[6] != null ? row[6].toString() : "N/A";
 
             logs.add(AuditLogResponse.builder()
                     .entityName(entityName)
                     .entityId(entityId)
+                    .targetName(targetName)
                     .actionType(actionType)
                     .changedBy(changedBy)
                     .revision(revision)
@@ -107,11 +126,11 @@ public class AuditLogService {
     @Transactional(readOnly = true)
     public List<Map<String, Object>> getProductPriceHistory(UUID productId) {
         String sql = """
-                    SELECT retail_price, wholesale_price, mac_price, revtype,
-                           COALESCE(updated_by, created_by, 'SYSTEM') as changed_by,
-                           rev, COALESCE(updated_at, created_at) as changed_at
-                    FROM products_audit
-                    WHERE id = :productId
+                    SELECT a.retail_price, a.wholesale_price, a.mac_price, a.revtype,
+                           COALESCE(a.updated_by, a.created_by, 'SYSTEM') as changed_by,
+                           a.rev, r.revtstmp as changed_at
+                    FROM products_audit a JOIN revinfo r ON a.rev = r.rev
+                    WHERE a.id = :productId
                     ORDER BY changed_at DESC
                 """;
 
@@ -129,6 +148,18 @@ public class AuditLogService {
                     changedAt = ts.toInstant();
                 } else if (row[6] instanceof java.util.Date d) {
                     changedAt = d.toInstant();
+                } else if (row[6] instanceof java.time.LocalDateTime ldt) {
+                    changedAt = ldt.atZone(java.time.ZoneId.systemDefault()).toInstant();
+                } else if (row[6] instanceof java.time.Instant inst) {
+                    changedAt = inst;
+                } else if (row[6] instanceof java.time.OffsetDateTime odt) {
+                    changedAt = odt.toInstant();
+                } else if (row[6] instanceof Long l) {
+                    changedAt = Instant.ofEpochMilli(l);
+                } else if (row[6] instanceof Number n) {
+                    changedAt = Instant.ofEpochMilli(n.longValue());
+                } else {
+                    log.warn("Unknown timestamp type in getProductPriceHistory: {}", row[6].getClass().getName());
                 }
             }
 

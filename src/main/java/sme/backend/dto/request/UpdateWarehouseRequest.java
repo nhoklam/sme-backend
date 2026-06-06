@@ -12,6 +12,8 @@ public class UpdateWarehouseRequest {
     private String address;
     private String phone;
     private sme.backend.entity.Warehouse.WarehouseType warehouseType;
+    private Double latitude;
+    private Double longitude;
 
     // Cho phép gán hoặc xóa quản lý chi nhánh
     // null = không thay đổi, nếu gửi null (với hasManagerId = true) = xóa

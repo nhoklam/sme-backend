@@ -32,6 +32,28 @@ public class DatabaseFixRunner implements CommandLineRunner {
             jdbcTemplate.execute("ALTER TABLE order_status_history DROP CONSTRAINT IF EXISTS order_status_history_old_status_check");
             
             log.info("Successfully cleaned up outdated enum constraints in database.");
+
+            // Phase 5: Database Index Optimization for Search Performance
+            log.info("Creating database indexes for performance optimization...");
+            
+            // Products
+            jdbcTemplate.execute("CREATE INDEX IF NOT EXISTS idx_products_search ON products (name, sku, isbn_barcode)");
+            jdbcTemplate.execute("CREATE INDEX IF NOT EXISTS idx_products_category ON products (category_id)");
+            jdbcTemplate.execute("CREATE INDEX IF NOT EXISTS idx_products_is_active ON products (is_active)");
+
+            // Customers
+            jdbcTemplate.execute("CREATE INDEX IF NOT EXISTS idx_customers_search ON customers (phone_number, full_name)");
+
+            // Invoices
+            jdbcTemplate.execute("CREATE INDEX IF NOT EXISTS idx_invoices_customer ON invoices (customer_id)");
+            jdbcTemplate.execute("CREATE INDEX IF NOT EXISTS idx_invoices_code ON invoices (code)");
+
+            // Orders
+            jdbcTemplate.execute("CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders (customer_id)");
+            jdbcTemplate.execute("CREATE INDEX IF NOT EXISTS idx_orders_code ON orders (code)");
+
+            log.info("Successfully created database indexes.");
+
         } catch (Exception e) {
             log.warn("Could not execute constraint cleanup: {}", e.getMessage());
         }

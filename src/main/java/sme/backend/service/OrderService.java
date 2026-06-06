@@ -114,7 +114,7 @@ public class OrderService {
         UUID assignedWarehouseId = null;
         Map<String, Object> chosenPlan = null;
 
-        List<Map<String, Object>> plans = suggestBranchesForOrder(req.getProvinceCode(), req.getItems());
+        List<Map<String, Object>> plans = suggestBranchesForOrder(req.getProvinceCode(), req.getShippingLatitude(), req.getShippingLongitude(), req.getItems());
         if (plans.isEmpty())
             throw new BusinessException("NO_WAREHOUSE", "Không đủ hàng để gom chung 1 kiện trên toàn hệ thống.");
 
@@ -140,7 +140,10 @@ public class OrderService {
         Order order = Order.builder()
                 .code(generateOrderCode()).customerId(customer.getId()).assignedWarehouseId(assignedWarehouseId)
                 .type(orderType).shippingName(req.getShippingName()).shippingPhone(req.getShippingPhone())
-                .shippingAddress(req.getShippingAddress()).provinceCode(req.getProvinceCode()).totalAmount(totalAmount)
+                .shippingAddress(req.getShippingAddress()).provinceCode(req.getProvinceCode())
+                .shippingLatitude(req.getShippingLatitude())
+                .shippingLongitude(req.getShippingLongitude())
+                .totalAmount(totalAmount)
                 .shippingFee(shippingFee).discountAmount(discountAmount).finalAmount(finalAmount).paymentMethod(req.getPaymentMethod())
                 .paymentStatus(Order.PaymentStatus.UNPAID).note(req.getNote())
                 .status(initialStatus)
@@ -229,14 +232,34 @@ public class OrderService {
         return mapToResponse(order);
     }
 
+    // ─────────────────────────────────────────────────────────
+    // NV-1: Named Constants cho thuật toán Smart Routing
+    // ─────────────────────────────────────────────────────────
+    private static final int SCORE_READY_TO_SHIP       = 1000;
+    private static final int SCORE_MAX_DISTANCE         = 500;
+    private static final int DISTANCE_PENALTY_PER_KM    = 10;
+    private static final double MAX_DISTANCE_KM         = 50.0;
+    private static final int OVER_DISTANCE_PENALTY      = -300;
+    private static final int TRANSFER_PENALTY_PER_ITEM  = 10;
+
     @Transactional(readOnly = true)
     public List<Map<String, Object>> suggestBranchesForOrder(String provinceCode,
+            Double shippingLat, Double shippingLng,
             List<CreateOrderRequest.OrderItemRequest> items) {
         if (items == null || items.isEmpty())
             return List.of();
+
+        // NV-1: Kiểm tra xem có tọa độ giao hàng không, dùng cho tính khoảng cách
+        boolean hasCoordinates = (shippingLat != null && shippingLng != null);
+
         List<Warehouse> activeWarehouses = warehouseRepository.findByIsActiveTrueOrderByName();
         List<Map<String, Object>> suggestions = new ArrayList<>();
-        List<UUID> productIds = items.stream().map(CreateOrderRequest.OrderItemRequest::getProductId).toList();
+        List<UUID> productIds = items.stream().map(CreateOrderRequest.OrderItemRequest::getProductId).distinct().toList();
+
+        // NV-5: Build Map for Product Names to avoid N+1 inside loop
+        Map<UUID, String> productNameMap = productRepository.findAllById(productIds).stream()
+                .collect(Collectors.toMap(Product::getId, Product::getName));
+
         List<Inventory> allInventories = inventoryRepository.findByProductIdIn(productIds);
         Map<UUID, Map<UUID, Integer>> stockMatrix = new HashMap<>();
         for (Inventory inv : allInventories) {
@@ -277,12 +300,12 @@ public class OrderService {
                         if (sourceStock > 0) {
                             int takeQty = Math.min(sourceStock, remainingToFind);
                             remainingToFind -= takeQty;
-                            Product prod = productRepository.findById(item.getProductId()).orElseThrow();
+                            String prodName = productNameMap.getOrDefault(item.getProductId(), "Unknown");
                             transferRequirements.add(Map.of(
                                     "fromWarehouseId", sourceWarehouse.getId(),
                                     "fromWarehouseName", sourceWarehouse.getName(),
                                     "productId", item.getProductId(),
-                                    "productName", prod.getName(),
+                                    "productName", prodName,
                                     "quantity", takeQty));
                         }
                     }
@@ -296,20 +319,55 @@ public class OrderService {
             if (!isReadyToShip && transferRequirements.isEmpty())
                 continue;
 
+            // ─────────────────────────────────────────────────────────
+            // NV-1: Tính Score với Geographic Distance
+            // ─────────────────────────────────────────────────────────
+            int score = 0;
+
+            // Yếu tố 1: Kho có sẵn đủ hàng
+            if (isReadyToShip) {
+                score += SCORE_READY_TO_SHIP;
+            }
+
+            // Yếu tố 2: Khoảng cách địa lý
+            double distanceKm = Double.MAX_VALUE;
+            int distanceScore = 0;
+
+            if (hasCoordinates
+                    && targetWarehouse.getLatitude() != null
+                    && targetWarehouse.getLongitude() != null) {
+                // Tính khoảng cách thực tế bằng Haversine
+                distanceKm = sme.backend.util.HaversineUtils.calculateDistance(
+                        shippingLat, shippingLng,
+                        targetWarehouse.getLatitude(), targetWarehouse.getLongitude());
+
+                if (distanceKm <= MAX_DISTANCE_KM) {
+                    // Trong bán kính: tính điểm tuyến tính suy giảm theo khoảng cách
+                    distanceScore = (int) Math.max(0,
+                            SCORE_MAX_DISTANCE - (distanceKm * DISTANCE_PENALTY_PER_KM));
+                } else {
+                    // Ngoài bán kính: 0 điểm + penalty mạnh, nhưng vẫn giữ trong list
+                    distanceScore = OVER_DISTANCE_PENALTY;
+                }
+            } else if (isSameProvince) {
+                // FALLBACK: Không có tọa độ → lùi về logic isSameProvince cũ
+                distanceScore = SCORE_MAX_DISTANCE;
+            }
+            // Nếu cả 2 đều null → distanceScore = 0 (kho này không có lợi thế địa lý)
+
+            score += distanceScore;
+
+            // Yếu tố 3: Penalty cho việc phải điều chuyển nội bộ
+            score -= transferRequirements.size() * TRANSFER_PENALTY_PER_ITEM;
+
             Map<String, Object> plan = new HashMap<>();
             plan.put("warehouseId", targetWarehouse.getId());
             plan.put("warehouseName", targetWarehouse.getName());
             plan.put("isSameProvince", isSameProvince);
             plan.put("isReadyToShip", isReadyToShip);
+            plan.put("distanceKm", distanceKm == Double.MAX_VALUE ? null : Math.round(distanceKm * 10.0) / 10.0);
             plan.put("availableItems", availableItems);
             plan.put("transferRequirements", transferRequirements);
-
-            int score = 0;
-            if (isReadyToShip)
-                score += 1000;
-            if (isSameProvince)
-                score += 500;
-            score -= transferRequirements.size() * 10;
             plan.put("sortScore", score);
             suggestions.add(plan);
         }
@@ -349,58 +407,7 @@ public class OrderService {
         }
 
         if (status == Order.OrderStatus.CANCELLED) {
-            List<InternalTransfer> transfers = transferRepository.findByReferenceOrderId(orderId);
-            Map<UUID, Integer> stuckTransferQtys = new HashMap<>();
-
-            for (InternalTransfer transfer : transfers) {
-                if (transfer.getStatus() == InternalTransfer.TransferStatus.DRAFT) {
-                    transfer.setStatus(InternalTransfer.TransferStatus.CANCELLED);
-                    transfer.setNote((transfer.getNote() != null ? transfer.getNote() : "")
-                            + " | Hủy tự động do Đơn hàng " + order.getCode() + " bị khách hủy.");
-                    transferRepository.save(transfer);
-
-                    for (TransferItem tItem : transfer.getItems()) {
-                        inventoryService.releaseReservation(tItem.getProductId(), transfer.getFromWarehouseId(),
-                                tItem.getQuantity(), orderId, changedBy);
-                        stuckTransferQtys.put(tItem.getProductId(),
-                                stuckTransferQtys.getOrDefault(tItem.getProductId(), 0) + tItem.getQuantity());
-                    }
-                } else if (transfer.getStatus() == InternalTransfer.TransferStatus.DISPATCHED) {
-                    transfer.setStatus(InternalTransfer.TransferStatus.CANCELLED);
-                    transfer.setNote((transfer.getNote() != null ? transfer.getNote() : "")
-                            + " | Hủy tự động do Đơn hàng hủy. Hàng đang đi đường được hoàn trả về kho gốc.");
-                    transferRepository.save(transfer);
-
-                    for (TransferItem tItem : transfer.getItems()) {
-                        Inventory srcInv = inventoryRepository
-                                .findByProductIdAndWarehouseId(tItem.getProductId(), transfer.getFromWarehouseId())
-                                .orElse(null);
-                        if (srcInv != null) {
-                            int before = srcInv.getQuantity() != null ? srcInv.getQuantity() : 0;
-                            srcInv.setInTransit(Math.max(0, srcInv.getInTransit() - tItem.getQuantity()));
-                            srcInv.setQuantity(srcInv.getQuantity() + tItem.getQuantity());
-                            inventoryRepository.save(srcInv);
-                            inventoryService.recordTransaction(srcInv, transfer.getId(), "CANCEL_TRANSFER",
-                                    tItem.getQuantity(), before, srcInv.getQuantity(), changedBy,
-                                    "Khách hủy đơn, quay đầu hàng đang luân chuyển");
-                        }
-                        stuckTransferQtys.put(tItem.getProductId(),
-                                stuckTransferQtys.getOrDefault(tItem.getProductId(), 0) + tItem.getQuantity());
-                    }
-                }
-            }
-
-            if (order.getAssignedWarehouseId() != null) {
-                for (OrderItem item : order.getItems()) {
-                    int totalRequired = item.getQuantity();
-                    int stuckQty = stuckTransferQtys.getOrDefault(item.getProductId(), 0);
-                    int qtyToReleaseAtAssigned = totalRequired - stuckQty;
-                    if (qtyToReleaseAtAssigned > 0) {
-                        inventoryService.releaseReservation(item.getProductId(), order.getAssignedWarehouseId(),
-                                qtyToReleaseAtAssigned, orderId, changedBy);
-                    }
-                }
-            }
+            doCancelOrderWithCleanup(order, note, changedBy);
             order.setCancelledReason(note);
         }
 
@@ -409,21 +416,15 @@ public class OrderService {
                 inventoryService.returnToStock(
                     item.getProductId(), order.getAssignedWarehouseId(), item.getQuantity(), orderId, "RETURNED_ORDER",
                     changedBy);
-                Product p = productRepository.findById(item.getProductId()).orElse(null);
-                if (p != null) {
-                    p.setSoldQuantity(Math.max(0, (p.getSoldQuantity() != null ? p.getSoldQuantity() : 0) - item.getQuantity()));
-                    productRepository.save(p);
-                }
+                // NV-2: Dùng native query decrement an toàn
+                productRepository.decrementSoldQuantity(item.getProductId(), item.getQuantity());
             });
         }
 
         if (status == Order.OrderStatus.DELIVERED) {
             order.getItems().forEach(item -> {
-                Product p = productRepository.findById(item.getProductId()).orElse(null);
-                if (p != null) {
-                    p.setSoldQuantity((p.getSoldQuantity() != null ? p.getSoldQuantity() : 0) + item.getQuantity());
-                    productRepository.save(p);
-                }
+                // NV-2: Dùng native query increment an toàn
+                productRepository.incrementSoldQuantity(item.getProductId(), item.getQuantity());
             });
             if ("COD".equals(order.getPaymentMethod())) {
                 order.setPaymentStatus(Order.PaymentStatus.PAID);
@@ -483,6 +484,71 @@ public class OrderService {
         }
 
         return mapToResponse(orderRepository.save(order));
+    }
+
+    /**
+     * Dùng riêng cho ScheduledJob: Mỗi đơn hàng là 1 transaction độc lập,
+     * ngăn lỗi 1 đơn kéo theo rollback toàn bộ quá trình dọn dẹp.
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    public void cancelOrderWithCleanup(UUID orderId, String reason, String changedBy) {
+        Order order = orderRepository.findByIdWithDetails(orderId).orElseThrow();
+        
+        // Guard clause: Chống Race Condition giữa khách bấm hủy và job tự động hủy.
+        // Xác suất thấp + Isolation Level mặc định của DB (READ COMMITTED) là đủ,
+        // không cần dùng Optimistic Lock (@Version) trên Order gây phức tạp.
+        if (order.getStatus() != Order.OrderStatus.PENDING 
+            && order.getStatus() != Order.OrderStatus.WAITING_FOR_CONSOLIDATION 
+            && order.getStatus() != Order.OrderStatus.PAYMENT_PENDING) {
+            return;
+        }
+
+        doCancelOrderWithCleanup(order, reason, changedBy);
+        
+        order.transitionTo(Order.OrderStatus.CANCELLED, reason, changedBy);
+        order.setCancelledReason(reason);
+        orderRepository.save(order);
+    }
+
+    private void doCancelOrderWithCleanup(Order order, String reason, String changedBy) {
+        List<InternalTransfer> transfers = transferRepository.findByReferenceOrderId(order.getId());
+        Map<UUID, Integer> stuckTransferQtys = new HashMap<>();
+
+        for (InternalTransfer transfer : transfers) {
+            if (transfer.getStatus() == InternalTransfer.TransferStatus.DRAFT) {
+                transfer.setStatus(InternalTransfer.TransferStatus.CANCELLED);
+                transfer.setNote((transfer.getNote() != null ? transfer.getNote() : "")
+                        + " | Hủy tự động do Đơn hàng " + order.getCode() + " bị hủy.");
+                transferRepository.save(transfer);
+
+                for (TransferItem tItem : transfer.getItems()) {
+                    inventoryService.releaseReservation(tItem.getProductId(), transfer.getFromWarehouseId(),
+                            tItem.getQuantity(), order.getId(), changedBy);
+                    stuckTransferQtys.put(tItem.getProductId(),
+                            stuckTransferQtys.getOrDefault(tItem.getProductId(), 0) + tItem.getQuantity());
+                }
+            } else if (transfer.getStatus() == InternalTransfer.TransferStatus.DISPATCHED) {
+                // NV-4: Giữ nguyên Transfer DISPATCHED, chỉ detach khỏi Order.
+                // Tránh cộng dồn quantity 2 lần (lúc đơn hủy và lúc xe về gọi receive).
+                transfer.setReferenceOrderId(null);
+                transfer.setNote((transfer.getNote() != null ? transfer.getNote() : "")
+                        + " | [CẢNH BÁO] Đơn hàng " + order.getCode() + " đã hủy nhưng hàng đang đi đường. Cần xử lý thủ công khi xe tới.");
+                transferRepository.save(transfer);
+                // KHÔNG giải phóng inventory ở đây, cũng KHÔNG cộng vào stuckTransferQtys
+            }
+        }
+
+        if (order.getAssignedWarehouseId() != null) {
+            for (OrderItem item : order.getItems()) {
+                int totalRequired = item.getQuantity();
+                int stuckQty = stuckTransferQtys.getOrDefault(item.getProductId(), 0);
+                int qtyToReleaseAtAssigned = totalRequired - stuckQty;
+                if (qtyToReleaseAtAssigned > 0) {
+                    inventoryService.releaseReservation(item.getProductId(), order.getAssignedWarehouseId(),
+                            qtyToReleaseAtAssigned, order.getId(), changedBy);
+                }
+            }
+        }
     }
 
     @Transactional
@@ -593,8 +659,57 @@ public class OrderService {
     @Transactional(readOnly = true)
     public Page<OrderResponse> getOrders(UUID warehouseId, Order.OrderStatus status, Order.OrderType type,
             String keyword, Instant fromDate, Instant toDate, Order.PaymentStatus paymentStatus, String provinceCode, Pageable pageable) {
-        return orderRepository.searchOrders(warehouseId, status, type, keyword, fromDate, toDate, paymentStatus, provinceCode, pageable)
-                .map(this::mapToSimpleResponse);
+        Page<Order> paged = orderRepository.searchOrders(warehouseId, status, type, keyword, fromDate, toDate, paymentStatus, provinceCode, pageable);
+
+        java.util.List<UUID> customerIds = paged.getContent().stream().map(Order::getCustomerId).filter(java.util.Objects::nonNull).distinct().toList();
+        java.util.List<UUID> warehouseIds = paged.getContent().stream().map(Order::getAssignedWarehouseId).filter(java.util.Objects::nonNull).distinct().toList();
+        java.util.List<String> usernames = paged.getContent().stream().map(Order::getCreatedBy).filter(u -> u != null && !u.equals("SYSTEM")).distinct().toList();
+
+        java.util.Map<UUID, Customer> customerMap = customerIds.isEmpty() ? java.util.Collections.emptyMap() : customerRepository.findAllById(customerIds).stream().collect(java.util.stream.Collectors.toMap(Customer::getId, c -> c));
+        java.util.Map<UUID, Warehouse> warehouseMap = warehouseIds.isEmpty() ? java.util.Collections.emptyMap() : warehouseRepository.findAllById(warehouseIds).stream().collect(java.util.stream.Collectors.toMap(Warehouse::getId, w -> w));
+        java.util.Map<String, User> userMap = usernames.isEmpty() ? java.util.Collections.emptyMap() : userRepository.findByUsernameIn(usernames).stream().collect(java.util.stream.Collectors.toMap(User::getUsername, u -> u));
+
+        return paged.map(order -> {
+            String custName = "Khách lẻ", custPhone = null;
+            if (order.getCustomerId() != null) {
+                Customer c = customerMap.get(order.getCustomerId());
+                if (c != null) {
+                    custName = c.getFullName();
+                    custPhone = c.getPhoneNumber();
+                }
+            }
+            String warehouseName = null;
+            if (order.getAssignedWarehouseId() != null) {
+                Warehouse w = warehouseMap.get(order.getAssignedWarehouseId());
+                if (w != null) warehouseName = w.getName();
+            }
+            String createdByName = "Hệ thống";
+            if (order.getCreatedBy() != null && !order.getCreatedBy().equals("SYSTEM")) {
+                User u = userMap.get(order.getCreatedBy());
+                if (u != null) createdByName = u.getFullName();
+                else createdByName = order.getCreatedBy();
+            }
+
+            return OrderResponse.builder()
+                .id(order.getId()).code(order.getCode()).customerId(order.getCustomerId())
+                .customerName(custName).customerPhone(custPhone)
+                .assignedWarehouseId(order.getAssignedWarehouseId()).assignedWarehouseName(warehouseName)
+                .status(order.getStatus() != null ? order.getStatus().name() : null)
+                .type(order.getType() != null ? order.getType().name() : null)
+                .shippingName(order.getShippingName()).shippingPhone(order.getShippingPhone())
+                .shippingAddress(order.getShippingAddress()).provinceCode(order.getProvinceCode())
+                .totalAmount(order.getTotalAmount()).shippingFee(order.getShippingFee())
+                .discountAmount(order.getDiscountAmount()).finalAmount(order.getFinalAmount())
+                .paymentMethod(order.getPaymentMethod())
+                .paymentStatus(order.getPaymentStatus() != null ? order.getPaymentStatus().name() : null)
+                .trackingCode(order.getTrackingCode()).shippingProvider(order.getShippingProvider())
+                .codReconciled(order.getCodReconciled()).note(order.getNote())
+                .cancelledReason(order.getCancelledReason())
+                .packedBy(order.getPackedBy()).packedAt(order.getPackedAt())
+                .createdByName(createdByName)
+                .createdAt(order.getCreatedAt()).updatedAt(order.getUpdatedAt())
+                .items(List.of()).statusHistory(List.of()).build();
+        });
     }
 
     @Transactional(readOnly = true)
@@ -604,18 +719,29 @@ public class OrderService {
 
     @Transactional(readOnly = true)
     public List<OrderResponse> getPendingOrders(UUID warehouseId) {
-        return orderRepository.findPendingOrdersByWarehouse(warehouseId).stream().map(this::mapToSimpleResponse)
-                .toList();
+        List<Order> orders = orderRepository.findPendingOrdersByWarehouse(warehouseId);
+        if (orders.isEmpty()) return List.of();
+
+        // NV-5: Bulk fetch mappings to avoid N+1 queries when mapping each order
+        List<UUID> customerIds = orders.stream().map(Order::getCustomerId).filter(Objects::nonNull).distinct().toList();
+        List<UUID> warehouseIds = orders.stream().map(Order::getAssignedWarehouseId).filter(Objects::nonNull).distinct().toList();
+        List<String> usernames = orders.stream().map(Order::getCreatedBy).filter(u -> u != null && !u.equals("SYSTEM")).distinct().toList();
+
+        Map<UUID, Customer> customerMap = customerIds.isEmpty() ? Collections.emptyMap() : customerRepository.findAllById(customerIds).stream().collect(Collectors.toMap(Customer::getId, c -> c));
+        Map<UUID, Warehouse> warehouseMap = warehouseIds.isEmpty() ? Collections.emptyMap() : warehouseRepository.findAllById(warehouseIds).stream().collect(Collectors.toMap(Warehouse::getId, w -> w));
+        Map<String, User> userMap = usernames.isEmpty() ? Collections.emptyMap() : userRepository.findByUsernameIn(usernames).stream().collect(Collectors.toMap(User::getUsername, u -> u));
+
+        return orders.stream().map(order -> mapToSimpleResponse(order, customerMap, warehouseMap, userMap)).toList();
     }
 
     private String generateOrderCode() {
         return "ORD-" + System.currentTimeMillis();
     }
 
-    public OrderResponse mapToSimpleResponse(Order order) {
+    public OrderResponse mapToSimpleResponse(Order order, Map<UUID, Customer> customerMap, Map<UUID, Warehouse> warehouseMap, Map<String, User> userMap) {
         String custName = "Khách lẻ", custPhone = null;
         if (order.getCustomerId() != null) {
-            var customer = customerRepository.findById(order.getCustomerId()).orElse(null);
+            Customer customer = customerMap.get(order.getCustomerId());
             if (customer != null) {
                 custName = customer.getFullName();
                 custPhone = customer.getPhoneNumber();
@@ -623,9 +749,17 @@ public class OrderService {
         }
         String warehouseName = null;
         if (order.getAssignedWarehouseId() != null) {
-            warehouseName = warehouseRepository.findById(order.getAssignedWarehouseId()).map(Warehouse::getName)
-                    .orElse(null);
+            Warehouse w = warehouseMap.get(order.getAssignedWarehouseId());
+            if (w != null) warehouseName = w.getName();
         }
+        
+        String createdByName = "Hệ thống";
+        if (order.getCreatedBy() != null && !order.getCreatedBy().equals("SYSTEM")) {
+            User u = userMap.get(order.getCreatedBy());
+            if (u != null) createdByName = u.getFullName();
+            else createdByName = order.getCreatedBy();
+        }
+
         return OrderResponse.builder()
                 .id(order.getId()).code(order.getCode()).customerId(order.getCustomerId())
                 .customerName(custName).customerPhone(custPhone)
@@ -642,10 +776,7 @@ public class OrderService {
                 .codReconciled(order.getCodReconciled()).note(order.getNote())
                 .cancelledReason(order.getCancelledReason())
                 .packedBy(order.getPackedBy()).packedAt(order.getPackedAt())
-                .createdByName(order.getCreatedBy() != null && !order.getCreatedBy().equals("SYSTEM")
-                        ? userRepository.findByUsername(order.getCreatedBy()).map(User::getFullName)
-                                .orElse(order.getCreatedBy())
-                        : "Hệ thống")
+                .createdByName(createdByName)
                 .createdAt(order.getCreatedAt()).updatedAt(order.getUpdatedAt())
                 .items(List.of()).statusHistory(List.of()).build();
     }
@@ -670,22 +801,37 @@ public class OrderService {
             packedByName = userRepository.findById(order.getPackedBy()).map(User::getFullName).orElse(null);
         }
 
+        // NV-5: Bulk fetch products and reviews to avoid N+1 per item
+        List<UUID> productIds = order.getItems() != null ? order.getItems().stream().map(OrderItem::getProductId).distinct().toList() : List.of();
+        Map<UUID, Product> productMap = productIds.isEmpty() ? Collections.emptyMap() : 
+                productRepository.findAllById(productIds).stream().collect(Collectors.toMap(Product::getId, p -> p));
+
+        Set<UUID> reviewedProductIds = new HashSet<>();
+        if (order.getCustomerId() != null && !productIds.isEmpty()) {
+            List<ProductReview> reviews = productReviewRepository.findByProductIdInAndCustomerIdAndOrderId(productIds, order.getCustomerId(), order.getId());
+            reviews.forEach(r -> reviewedProductIds.add(r.getProductId()));
+        }
+
         List<OrderResponse.ItemResponse> items = order.getItems() == null ? List.of()
                 : order.getItems().stream().map(i -> {
-                    var product = productRepository.findById(i.getProductId()).orElse(null);
-                    boolean isRev = false;
-                    if (order.getCustomerId() != null) {
-                        isRev = productReviewRepository.existsByProductIdAndCustomerIdAndOrderId(
-                                i.getProductId(), order.getCustomerId(), order.getId());
-                    }
+                    Product product = productMap.get(i.getProductId());
+                    boolean isRev = reviewedProductIds.contains(i.getProductId());
                     return OrderResponse.ItemResponse.builder().productId(i.getProductId())
                             .productName(product != null ? product.getName() : null)
                             .isbnBarcode(product != null ? product.getIsbnBarcode() : null).quantity(i.getQuantity())
                             .unitPrice(i.getUnitPrice()).subtotal(i.getSubtotal())
-                            .isReviewed(isRev) // <-- ĐÃ THÊM
+                            .isReviewed(isRev) // <-- ĐÃ THÊM (tối ưu N+1)
                             .imageUrl(product != null ? product.getImageUrl() : null)
                             .build();
                 }).toList();
+
+        // NV-5: Bulk fetch user profiles for status history
+        List<UUID> historyUserIds = order.getStatusHistory() != null ? order.getStatusHistory().stream()
+                .map(h -> {
+                    try { return UUID.fromString(h.getChangedBy()); } catch (Exception e) { return null; }
+                }).filter(Objects::nonNull).distinct().toList() : List.of();
+        Map<UUID, User> historyUserMap = historyUserIds.isEmpty() ? Collections.emptyMap() :
+                userRepository.findAllById(historyUserIds).stream().collect(Collectors.toMap(User::getId, u -> u));
 
         List<OrderResponse.StatusHistoryResponse> history = order.getStatusHistory() == null ? List.of()
                 : order.getStatusHistory().stream().map(h -> {
@@ -693,8 +839,7 @@ public class OrderService {
                     if (h.getChangedBy() != null && !h.getChangedBy().equals("SYSTEM")) {
                         try {
                             UUID uId = UUID.fromString(h.getChangedBy());
-                            changedByName = userRepository.findById(uId).map(User::getFullName)
-                                    .orElse(h.getChangedBy());
+                            changedByName = historyUserMap.containsKey(uId) ? historyUserMap.get(uId).getFullName() : h.getChangedBy();
                         } catch (Exception e) {
                             changedByName = h.getChangedBy();
                         }
@@ -774,7 +919,7 @@ public class OrderService {
                 }
             }
             if (!"NONE".equals(invType)) {
-                Map<String, Object> iStats = invoiceRepository.getInvoiceStats(warehouseId, invType, keyword, fromDate, toDate);
+                Map<String, Object> iStats = invoiceRepository.getInvoiceStats(warehouseId, invType, keyword, fromDate, toDate, null);
                 if (iStats != null) {
                     totalCount += ((Number) iStats.getOrDefault("totalCount", 0)).longValue();
                     pendingCount += ((Number) iStats.getOrDefault("pendingCount", 0)).longValue();

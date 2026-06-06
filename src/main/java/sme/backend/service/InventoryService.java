@@ -70,7 +70,10 @@ public class InventoryService {
             throw new BusinessException("INVALID_WAREHOUSE", "Không thể nhập kho vì thiếu thông tin chi nhánh.");
         }
         try {
-            Inventory inv = getOrCreate(productId, warehouseId);
+            getOrCreate(productId, warehouseId);
+            // NV-2: Dùng Pessimistic Lock (timeout 10s) cho Admin task, ưu tiên POS (3s)
+            Inventory inv = inventoryRepository.findByProductAndWarehouseWithAdminLock(productId, warehouseId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Inventory", productId));
             if (inv.getMinQuantity() == null) {
                 inv.setMinQuantity(getSafeLowStockThreshold());
             }
@@ -133,7 +136,10 @@ public class InventoryService {
     public void returnToStock(UUID productId, UUID warehouseId,
             int quantity, UUID referenceId, String reason, String operator) {
 
-        Inventory inv = getOrCreate(productId, warehouseId);
+        getOrCreate(productId, warehouseId);
+        // NV-2: Dùng Pessimistic Lock (timeout 10s) cho Admin task, ưu tiên POS (3s)
+        Inventory inv = inventoryRepository.findByProductAndWarehouseWithAdminLock(productId, warehouseId)
+                .orElseThrow(() -> new ResourceNotFoundException("Inventory", productId));
         int before = inv.getQuantity() != null ? inv.getQuantity() : 0;
 
         boolean isReturnToSellable = "STOCK".equals(reason) || "RETURNED_ORDER".equals(reason) || "VOID_INVOICE".equals(reason);
@@ -233,7 +239,10 @@ public class InventoryService {
     @Transactional
     @CacheEvict(value = "inventories", allEntries = true)
     public void adjustInventory(AdjustInventoryRequest req, UUID referenceId, String operator) {
-        Inventory inv = getOrCreate(req.getProductId(), req.getWarehouseId());
+        getOrCreate(req.getProductId(), req.getWarehouseId());
+        // NV-2: Dùng Pessimistic Lock (timeout 10s) cho Admin task, ưu tiên POS (3s)
+        Inventory inv = inventoryRepository.findByProductAndWarehouseWithAdminLock(req.getProductId(), req.getWarehouseId())
+                .orElseThrow(() -> new ResourceNotFoundException("Inventory", req.getProductId()));
         int before = inv.getQuantity() != null ? inv.getQuantity() : 0;
         int diff = req.getActualQuantity() - before;
 

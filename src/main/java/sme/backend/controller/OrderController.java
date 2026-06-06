@@ -144,7 +144,7 @@ public class OrderController {
     @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> suggestBranchForOrder(@RequestBody CreateOrderRequest req) {
         return ResponseEntity.ok(ApiResponse.ok(
-                orderService.suggestBranchesForOrder(req.getProvinceCode(), req.getItems())));
+                orderService.suggestBranchesForOrder(req.getProvinceCode(), req.getShippingLatitude(), req.getShippingLongitude(), req.getItems())));
     }
 
     @PatchMapping("/{id}/status")

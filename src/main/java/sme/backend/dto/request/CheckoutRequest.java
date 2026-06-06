@@ -32,6 +32,9 @@ public class CheckoutRequest {
 
     private String note;
 
+    private Double shippingLatitude;
+    private Double shippingLongitude;
+
     @Data
     public static class CartItemRequest {
         @NotNull(message = "productId bắt buộc")

@@ -19,8 +19,8 @@ import java.util.UUID;
 @Repository
 public interface ProductRepository extends JpaRepository<Product, UUID> {
 
-    Optional<Product> findByIsbnBarcodeAndIsActiveTrue(String isbnBarcode);
-    Optional<Product> findBySkuAndIsActiveTrue(String sku);
+    Optional<Product> findByIsbnBarcodeIgnoreCaseAndIsActiveTrue(String isbnBarcode);
+    Optional<Product> findBySkuIgnoreCaseAndIsActiveTrue(String sku);
     boolean existsByIsbnBarcode(String isbnBarcode);
 
     @Query("""
@@ -28,7 +28,7 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
         WHERE p.isActive = true
         AND (LOWER(p.name) LIKE LOWER(CONCAT('%', :keyword, '%'))
           OR p.isbnBarcode LIKE CONCAT('%', :keyword, '%')
-          OR p.sku LIKE CONCAT('%', :keyword, '%'))
+          OR LOWER(p.sku) LIKE LOWER(CONCAT('%', :keyword, '%')))
         ORDER BY p.name
         """)
     Page<Product> searchByKeyword(@Param("keyword") String keyword, Pageable pageable);
@@ -38,6 +38,16 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
     @Modifying
     @Query("UPDATE Product p SET p.macPrice = :macPrice WHERE p.id = :id")
     void updateMacPrice(@Param("id") UUID id, @Param("macPrice") BigDecimal macPrice);
+
+    // NV-2: Atomic update for soldQuantity without @Version to avoid OptimisticLockException
+    // clearAutomatically = true ensures any subsequent reads in the same transaction fetch the fresh value.
+    @Modifying
+    @Query("UPDATE Product p SET p.soldQuantity = COALESCE(p.soldQuantity, 0) + :qty WHERE p.id = :id")
+    void incrementSoldQuantity(@Param("id") UUID id, @Param("qty") int qty);
+
+    @Modifying
+    @Query("UPDATE Product p SET p.soldQuantity = GREATEST(COALESCE(p.soldQuantity, 0) - :qty, 0) WHERE p.id = :id")
+    void decrementSoldQuantity(@Param("id") UUID id, @Param("qty") int qty);
 
     @Query(value = """
         SELECT p.* FROM products p
@@ -73,7 +83,7 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
         ) combined ON p.id = combined.product_id
         WHERE p.is_active = true
         GROUP BY p.id, p.name
-        ORDER BY total_revenue DESC
+        ORDER BY total_sold DESC, total_revenue DESC
         LIMIT :limit
         """, nativeQuery = true)
     List<Map<String, Object>> findTopSellingProducts(
@@ -92,10 +102,12 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
             AND (:maxPrice IS NULL OR p.retailPrice <= :maxPrice)
             AND (:keyword IS NULL OR :keyword = ''
             OR LOWER(p.name) LIKE LOWER(CONCAT('%', :keyword, '%'))
-            OR p.isbnBarcode LIKE CONCAT('%', :keyword, '%')
-            OR p.sku LIKE CONCAT('%', :keyword, '%'))
+            OR p.slug LIKE LOWER(CONCAT('%', :slugKeyword, '%'))
+            OR LOWER(p.isbnBarcode) LIKE LOWER(CONCAT('%', :keyword, '%'))
+            OR LOWER(p.sku) LIKE LOWER(CONCAT('%', :keyword, '%')))
             """)
     Page<Product> searchProducts(@Param("keyword") String keyword, 
+                                 @Param("slugKeyword") String slugKeyword,
                                  @Param("categoryId") UUID categoryId, 
                                  @Param("supplierId") UUID supplierId, 
                                  @Param("isActive") Boolean isActive,

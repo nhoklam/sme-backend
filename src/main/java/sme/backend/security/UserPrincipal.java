@@ -5,10 +5,12 @@ import lombok.Getter;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.oauth2.core.user.OAuth2User;
 import sme.backend.entity.User;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -18,7 +20,7 @@ import java.util.UUID;
  */
 @AllArgsConstructor
 @Getter
-public class UserPrincipal implements UserDetails {
+public class UserPrincipal implements OAuth2User, UserDetails {
 
     private final UUID id;
     private final String username;
@@ -28,6 +30,7 @@ public class UserPrincipal implements UserDetails {
     private final User.UserRole role;
     private final boolean isActive;
     private final Collection<? extends GrantedAuthority> authorities;
+    private Map<String, Object> attributes;
 
     public static UserPrincipal build(User user) {
         List<GrantedAuthority> authorities = List.of(
@@ -41,8 +44,29 @@ public class UserPrincipal implements UserDetails {
                 user.getWarehouseId(),
                 user.getRole(),
                 Boolean.TRUE.equals(user.getIsActive()),
-                authorities
+                authorities,
+                null
         );
+    }
+
+    public static UserPrincipal build(User user, Map<String, Object> attributes) {
+        UserPrincipal userPrincipal = UserPrincipal.build(user);
+        userPrincipal.setAttributes(attributes);
+        return userPrincipal;
+    }
+
+    public void setAttributes(Map<String, Object> attributes) {
+        this.attributes = attributes;
+    }
+
+    @Override
+    public Map<String, Object> getAttributes() {
+        return attributes;
+    }
+
+    @Override
+    public String getName() {
+        return id.toString();
     }
 
     @Override

@@ -52,6 +52,7 @@ public class InternalTransfer extends BaseEntity {
     private Instant receivedAt;
 
     @OneToMany(mappedBy = "transfer", cascade = CascadeType.ALL, orphanRemoval = true)
+    @org.hibernate.annotations.BatchSize(size = 50)
     @Builder.Default
     private List<TransferItem> items = new ArrayList<>();
 

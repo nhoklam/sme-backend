@@ -2,6 +2,7 @@ package sme.backend.repository;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -22,8 +23,10 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
 
     boolean existsByCode(String code);
 
+    @EntityGraph(attributePaths = {"items"})
     Page<Invoice> findByShiftIdOrderByCreatedAtDesc(UUID shiftId, Pageable pageable);
 
+    @EntityGraph(attributePaths = {"items"})
     Page<Invoice> findByCustomerIdOrderByCreatedAtDesc(UUID customerId, Pageable pageable);
 
     @Query(value = """
@@ -39,6 +42,7 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
               AND (CAST(:paymentMethod AS VARCHAR) IS NULL OR EXISTS (
                   SELECT 1 FROM invoice_payments ip WHERE ip.invoice_id = i.id AND CAST(ip.method AS VARCHAR) = CAST(:paymentMethod AS VARCHAR)
               ))
+              AND (CAST(:cashierId AS UUID) IS NULL OR i.shift_id IN (SELECT s.id FROM shifts s WHERE s.cashier_id = CAST(:cashierId AS UUID)))
             ORDER BY i.created_at DESC
             """, countQuery = """
             SELECT COUNT(*) FROM invoices i
@@ -53,6 +57,7 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
               AND (CAST(:paymentMethod AS VARCHAR) IS NULL OR EXISTS (
                   SELECT 1 FROM invoice_payments ip WHERE ip.invoice_id = i.id AND CAST(ip.method AS VARCHAR) = CAST(:paymentMethod AS VARCHAR)
               ))
+              AND (CAST(:cashierId AS UUID) IS NULL OR i.shift_id IN (SELECT s.id FROM shifts s WHERE s.cashier_id = CAST(:cashierId AS UUID)))
             """, nativeQuery = true)
     Page<Invoice> searchInvoices(
             @Param("shiftId") UUID shiftId,
@@ -62,6 +67,7 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
             @Param("from") Instant from,
             @Param("to") Instant to,
             @Param("paymentMethod") String paymentMethod,
+            @Param("cashierId") UUID cashierId,
             Pageable pageable);
 
     @Query("""
@@ -99,6 +105,7 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
                 ) item_agg ON item_agg.invoice_id = i.id
                 WHERE (CAST(:wid AS VARCHAR) IS NULL OR CAST(s.warehouse_id AS VARCHAR) = CAST(:wid AS VARCHAR))
                   AND i.type = 'SALE'
+                  AND (CAST(:cid AS UUID) IS NULL OR s.cashier_id = CAST(:cid AS UUID))
                   AND i.created_at BETWEEN :from AND :to
                   AND (CAST(:pm AS VARCHAR) IS NULL OR EXISTS (SELECT 1 FROM invoice_payments ip WHERE ip.invoice_id = i.id AND CAST(ip.method AS VARCHAR) = CAST(:pm AS VARCHAR)))
 
@@ -116,6 +123,7 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
                 ) ord_item_agg ON ord_item_agg.order_id = o.id
                 WHERE (CAST(:wid AS VARCHAR) IS NULL OR CAST(o.assigned_warehouse_id AS VARCHAR) = CAST(:wid AS VARCHAR))
                   AND o.status = 'DELIVERED'
+                  AND (CAST(:cid AS VARCHAR) IS NULL OR CAST(o.created_by AS VARCHAR) = CAST(:cid AS VARCHAR))
                   AND o.created_at BETWEEN :from AND :to
                   AND (CAST(:pm AS VARCHAR) IS NULL OR o.payment_method = CAST(:pm AS VARCHAR))
             ) combined_data
@@ -123,7 +131,7 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
             ORDER BY period
             """, nativeQuery = true)
     List<Map<String, Object>> getRevenueReportDaily(@Param("wid") UUID warehouseId, @Param("from") Instant from,
-            @Param("to") Instant to, @Param("pm") String paymentMethod);
+            @Param("to") Instant to, @Param("pm") String paymentMethod, @Param("cid") UUID cashierId);
 
     @Query(value = """
             SELECT
@@ -146,6 +154,7 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
                 ) item_agg ON item_agg.invoice_id = i.id
                 WHERE (CAST(:wid AS VARCHAR) IS NULL OR CAST(s.warehouse_id AS VARCHAR) = CAST(:wid AS VARCHAR))
                   AND i.type = 'SALE'
+                  AND (CAST(:cid AS UUID) IS NULL OR s.cashier_id = CAST(:cid AS UUID))
                   AND i.created_at BETWEEN :from AND :to
                   AND (CAST(:pm AS VARCHAR) IS NULL OR EXISTS (SELECT 1 FROM invoice_payments ip WHERE ip.invoice_id = i.id AND CAST(ip.method AS VARCHAR) = CAST(:pm AS VARCHAR)))
 
@@ -163,6 +172,7 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
                 ) ord_item_agg ON ord_item_agg.order_id = o.id
                 WHERE (CAST(:wid AS VARCHAR) IS NULL OR CAST(o.assigned_warehouse_id AS VARCHAR) = CAST(:wid AS VARCHAR))
                   AND o.status = 'DELIVERED'
+                  AND (CAST(:cid AS VARCHAR) IS NULL OR CAST(o.created_by AS VARCHAR) = CAST(:cid AS VARCHAR))
                   AND o.created_at BETWEEN :from AND :to
                   AND (CAST(:pm AS VARCHAR) IS NULL OR o.payment_method = CAST(:pm AS VARCHAR))
             ) combined_data
@@ -170,7 +180,7 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
             ORDER BY period
             """, nativeQuery = true)
     List<Map<String, Object>> getRevenueReportWeekly(@Param("wid") UUID warehouseId, @Param("from") Instant from,
-            @Param("to") Instant to, @Param("pm") String paymentMethod);
+            @Param("to") Instant to, @Param("pm") String paymentMethod, @Param("cid") UUID cashierId);
 
     @Query(value = """
             SELECT
@@ -193,6 +203,7 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
                 ) item_agg ON item_agg.invoice_id = i.id
                 WHERE (CAST(:wid AS VARCHAR) IS NULL OR CAST(s.warehouse_id AS VARCHAR) = CAST(:wid AS VARCHAR))
                   AND i.type = 'SALE'
+                  AND (CAST(:cid AS UUID) IS NULL OR s.cashier_id = CAST(:cid AS UUID))
                   AND i.created_at BETWEEN :from AND :to
                   AND (CAST(:pm AS VARCHAR) IS NULL OR EXISTS (SELECT 1 FROM invoice_payments ip WHERE ip.invoice_id = i.id AND CAST(ip.method AS VARCHAR) = CAST(:pm AS VARCHAR)))
 
@@ -210,6 +221,7 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
                 ) ord_item_agg ON ord_item_agg.order_id = o.id
                 WHERE (CAST(:wid AS VARCHAR) IS NULL OR CAST(o.assigned_warehouse_id AS VARCHAR) = CAST(:wid AS VARCHAR))
                   AND o.status = 'DELIVERED'
+                  AND (CAST(:cid AS VARCHAR) IS NULL OR CAST(o.created_by AS VARCHAR) = CAST(:cid AS VARCHAR))
                   AND o.created_at BETWEEN :from AND :to
                   AND (CAST(:pm AS VARCHAR) IS NULL OR o.payment_method = CAST(:pm AS VARCHAR))
             ) combined_data
@@ -217,7 +229,7 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
             ORDER BY period
             """, nativeQuery = true)
     List<Map<String, Object>> getRevenueReportMonthly(@Param("wid") UUID warehouseId, @Param("from") Instant from,
-            @Param("to") Instant to, @Param("pm") String paymentMethod);
+            @Param("to") Instant to, @Param("pm") String paymentMethod, @Param("cid") UUID cashierId);
 
     @Query(value = """
             SELECT
@@ -240,6 +252,7 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
                 ) item_agg ON item_agg.invoice_id = i.id
                 WHERE (CAST(:wid AS VARCHAR) IS NULL OR CAST(s.warehouse_id AS VARCHAR) = CAST(:wid AS VARCHAR))
                   AND i.type = 'SALE'
+                  AND (CAST(:cid AS UUID) IS NULL OR s.cashier_id = CAST(:cid AS UUID))
                   AND i.created_at BETWEEN :from AND :to
                   AND (CAST(:pm AS VARCHAR) IS NULL OR EXISTS (SELECT 1 FROM invoice_payments ip WHERE ip.invoice_id = i.id AND CAST(ip.method AS VARCHAR) = CAST(:pm AS VARCHAR)))
 
@@ -257,6 +270,7 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
                 ) ord_item_agg ON ord_item_agg.order_id = o.id
                 WHERE (CAST(:wid AS VARCHAR) IS NULL OR CAST(o.assigned_warehouse_id AS VARCHAR) = CAST(:wid AS VARCHAR))
                   AND o.status = 'DELIVERED'
+                  AND (CAST(:cid AS VARCHAR) IS NULL OR CAST(o.created_by AS VARCHAR) = CAST(:cid AS VARCHAR))
                   AND o.created_at BETWEEN :from AND :to
                   AND (CAST(:pm AS VARCHAR) IS NULL OR o.payment_method = CAST(:pm AS VARCHAR))
             ) combined_data
@@ -264,7 +278,7 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
             ORDER BY period
             """, nativeQuery = true)
     List<Map<String, Object>> getRevenueReportYearly(@Param("wid") UUID warehouseId, @Param("from") Instant from,
-            @Param("to") Instant to, @Param("pm") String paymentMethod);
+            @Param("to") Instant to, @Param("pm") String paymentMethod, @Param("cid") UUID cashierId);
 
     @Query(value = """
             SELECT
@@ -282,10 +296,12 @@ public interface InvoiceRepository extends JpaRepository<Invoice, UUID> {
                    OR (LOWER(CAST(:keyword AS VARCHAR)) = 'khách lẻ' AND i.customer_id IS NULL))
               AND (CAST(:from AS TIMESTAMPTZ) IS NULL OR i.created_at >= CAST(:from AS TIMESTAMPTZ))
               AND (CAST(:to AS TIMESTAMPTZ) IS NULL OR i.created_at <= CAST(:to AS TIMESTAMPTZ))
+              AND (CAST(:cashierId AS UUID) IS NULL OR i.shift_id IN (SELECT s.id FROM shifts s WHERE s.cashier_id = CAST(:cashierId AS UUID)))
             """, nativeQuery = true)
     Map<String, Object> getInvoiceStats(@Param("warehouseId") UUID warehouseId,
                                         @Param("type") String type,
                                         @Param("keyword") String keyword,
                                         @Param("from") Instant from,
-                                        @Param("to") Instant to);
+                                        @Param("to") Instant to,
+                                        @Param("cashierId") UUID cashierId);
 }

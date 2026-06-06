@@ -15,6 +15,7 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 import sme.backend.security.CustomUserDetailsService;
 import sme.backend.security.jwt.JwtTokenProvider;
+import sme.backend.service.RedisTokenService;
 
 import java.io.IOException;
 
@@ -30,6 +31,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtTokenProvider jwtTokenProvider;
     private final CustomUserDetailsService userDetailsService;
+    private final RedisTokenService redisTokenService;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -41,6 +43,18 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             String token = extractTokenFromRequest(request);
 
             if (StringUtils.hasText(token) && jwtTokenProvider.validateToken(token)) {
+                String jti = jwtTokenProvider.getJtiFromToken(token);
+                
+                // --- FAIL OPEN LOGIC ---
+                // Trade-off: Nếu Redis sập, isJtiBlacklisted() sẽ bắt exception, log warning và trả về FALSE.
+                // Request vẫn được đi tiếp. Chấp nhận rủi ro cực nhỏ có token bị lộ lọt qua,
+                // để đổi lấy việc toàn bộ hệ thống (POS, ERP) KHÔNG bị "chết đứng" chỉ vì Redis down.
+                if (redisTokenService.isJtiBlacklisted(jti)) {
+                    log.warn("Token with JTI {} is blacklisted. Rejecting request.", jti);
+                    response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Token is no longer valid (logged out)");
+                    return;
+                }
+
                 String username = jwtTokenProvider.getUsernameFromToken(token);
                 UserDetails userDetails = userDetailsService.loadUserByUsername(username);
 

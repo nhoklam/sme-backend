@@ -8,6 +8,17 @@ spring:
     name: sme-backend
 
   # ========================
+  # OAUTH2
+  # ========================
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+  client-id: ${GOOGLE_CLIENT_ID}
+  client-secret: ${GOOGLE_CLIENT_SECRET}
+
+  # ========================
   # DATABASE (PostgreSQL)
   # ========================
   datasource:
@@ -18,9 +29,9 @@ spring:
     hikari:
       maximum-pool-size: 20
       minimum-idle: 5
-      connection-timeout: 30000
-      idle-timeout: 600000
-      max-lifetime: 1800000
+      connection-timeout: 20000
+      idle-timeout: 300000
+      max-lifetime: 1200000
       pool-name: SME-HikariPool
 
   # ========================
@@ -32,6 +43,7 @@ spring:
     show-sql: false
     properties:
       hibernate:
+        generate_statistics: true
         format_sql: true
         dialect: org.hibernate.dialect.PostgreSQLDialect
         jdbc:
@@ -156,6 +168,10 @@ app:
     allowed-headers: "*"
     allow-credentials: true
 
+  # OAuth2
+  oauth2:
+    authorized-redirect-uris: ${OAUTH2_REDIRECT_URIS:http://localhost:3000/oauth2/redirect,http://localhost:5173/oauth2/redirect}
+
   # Business Logic
   business:
     low-stock-threshold: 10       
@@ -199,7 +215,9 @@ logging:
     root: INFO
     sme.backend: DEBUG
     org.springframework.security: INFO
-    org.hibernate.SQL: INFO
+    org.hibernate.SQL: DEBUG
+    org.hibernate.orm.jdbc.bind: TRACE
+    org.hibernate.stat: DEBUG
     org.springframework.ai: INFO
   pattern:
     console: "%clr(%d{HH:mm:ss.SSS}){faint} %clr(${LOG_LEVEL_PATTERN:-%5p}) %clr([%15.15t]){faint} %clr(%-40.40logger{39}){cyan} %clr(:){faint} %m%n"

@@ -9,6 +9,10 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
+import jakarta.servlet.http.HttpServletRequest;
 import sme.backend.dto.request.ChangePasswordRequest;
 import sme.backend.dto.request.CreateUserRequest;
 import sme.backend.dto.request.LoginRequest;
@@ -44,17 +48,69 @@ public class AuthService {
     private final ShiftRepository shiftRepository;
     private final CustomerRepository customerRepository;
     private final PasswordEncoder passwordEncoder;
+    private final EmailService emailService;
+    private final RedisTokenService redisTokenService;
+
+    @Autowired(required = false)
+    private SecurityAuditService securityAuditService;
 
     // TTL Constants
     private static final long ADMIN_TTL = 10800000L; // 3 tiếng
     private static final long CUSTOMER_TTL = 604800000L; // 7 ngày
 
+    private String getClientIp() {
+        ServletRequestAttributes attribs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+        if (attribs != null) {
+            HttpServletRequest request = attribs.getRequest();
+            String ip = request.getHeader("X-Forwarded-For");
+            if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+                ip = request.getRemoteAddr();
+            }
+            return ip;
+        }
+        return "UNKNOWN";
+    }
+
+    private String getUserAgent() {
+        ServletRequestAttributes attribs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+        if (attribs != null) {
+            return attribs.getRequest().getHeader("User-Agent");
+        }
+        return "UNKNOWN";
+    }
+
     // ─────────────────────────────────────────────────────────
     // LOGIN CHO NHÂN VIÊN (POS & ADMIN)
     // ─────────────────────────────────────────────────────────
     public AuthResponse adminLogin(LoginRequest req) {
-        Authentication authentication = authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(req.getUsername(), req.getPassword()));
+        String ip = getClientIp();
+        String userAgent = getUserAgent();
+
+        if (redisTokenService.isLockedOut(req.getUsername())) {
+            // Fail Open comment: If Redis is down, isLockedOut returns false, allowing authentication to proceed (Fail Open).
+            if (securityAuditService != null) {
+                securityAuditService.logAccountLocked(req.getUsername(), ip, userAgent, "Blocked by Account Lockout policy");
+            }
+            throw new BusinessException("ACCOUNT_LOCKED", "Tài khoản của bạn đã bị khóa tạm thời do đăng nhập sai nhiều lần. Vui lòng thử lại sau.");
+        }
+
+        Authentication authentication;
+        try {
+            authentication = authenticationManager.authenticate(
+                    new UsernamePasswordAuthenticationToken(req.getUsername(), req.getPassword()));
+        } catch (org.springframework.security.core.AuthenticationException e) {
+            redisTokenService.recordFailedAttempt(req.getUsername());
+            if (securityAuditService != null) {
+                securityAuditService.logLoginFailed(req.getUsername(), ip, userAgent, "Invalid credentials");
+            }
+            throw e;
+        }
+
+        redisTokenService.clearFailedAttempts(req.getUsername());
+        if (securityAuditService != null) {
+            securityAuditService.logLoginSuccess(req.getUsername(), ip, userAgent);
+        }
+
         SecurityContextHolder.getContext().setAuthentication(authentication);
         UserPrincipal principal = (UserPrincipal) authentication.getPrincipal();
 
@@ -92,8 +148,33 @@ public class AuthService {
     // LOGIN CHO KHÁCH HÀNG (STOREFRONT)
     // ─────────────────────────────────────────────────────────
     public AuthResponse customerLogin(LoginRequest req) {
-        Authentication authentication = authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(req.getUsername(), req.getPassword()));
+        String ip = getClientIp();
+        String userAgent = getUserAgent();
+
+        if (redisTokenService.isLockedOut(req.getUsername())) {
+            if (securityAuditService != null) {
+                securityAuditService.logAccountLocked(req.getUsername(), ip, userAgent, "Blocked by Account Lockout policy");
+            }
+            throw new BusinessException("ACCOUNT_LOCKED", "Tài khoản của bạn đã bị khóa tạm thời do đăng nhập sai nhiều lần. Vui lòng thử lại sau.");
+        }
+
+        Authentication authentication;
+        try {
+            authentication = authenticationManager.authenticate(
+                    new UsernamePasswordAuthenticationToken(req.getUsername(), req.getPassword()));
+        } catch (org.springframework.security.core.AuthenticationException e) {
+            redisTokenService.recordFailedAttempt(req.getUsername());
+            if (securityAuditService != null) {
+                securityAuditService.logLoginFailed(req.getUsername(), ip, userAgent, "Invalid credentials");
+            }
+            throw e;
+        }
+
+        redisTokenService.clearFailedAttempts(req.getUsername());
+        if (securityAuditService != null) {
+            securityAuditService.logLoginSuccess(req.getUsername(), ip, userAgent);
+        }
+
         SecurityContextHolder.getContext().setAuthentication(authentication);
         UserPrincipal principal = (UserPrincipal) authentication.getPrincipal();
 
@@ -144,6 +225,51 @@ public class AuthService {
                 .refreshToken(newRefreshToken)
                 .tokenType("Bearer")
                 .expiresIn(ttl)
+                .build();
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // OAUTH2 TOKEN EXCHANGE
+    // ─────────────────────────────────────────────────────────
+    @Transactional
+    public AuthResponse exchangeOAuth2Token(String code) {
+        String value = redisTokenService.getAndDeleteOAuth2Code(code);
+        if (value == null) {
+            throw new BusinessException("INVALID_CODE", "Mã xác thực không hợp lệ hoặc đã hết hạn");
+        }
+
+        String[] parts = value.split(":", 2);
+        if (parts.length != 2) {
+            throw new BusinessException("INVALID_CODE", "Dữ liệu mã xác thực bị lỗi");
+        }
+
+        String accessToken = parts[0];
+        String userIdStr = parts[1];
+
+        User user = userRepository.findById(UUID.fromString(userIdStr))
+                .orElseThrow(() -> new BusinessException("USER_NOT_FOUND", "Không tìm thấy tài khoản"));
+
+        UserPrincipal principal = UserPrincipal.build(user);
+
+        String refreshToken = jwtTokenProvider.generateRefreshToken(user.getUsername());
+        long ttl = user.getRole() == User.UserRole.ROLE_CUSTOMER ? CUSTOMER_TTL : ADMIN_TTL;
+
+        String warehouseName = null;
+        if (user.getWarehouseId() != null) {
+            warehouseName = warehouseRepository.findById(user.getWarehouseId())
+                    .map(Warehouse::getName).orElse(null);
+        }
+
+        if (securityAuditService != null) {
+            securityAuditService.logEvent(user.getUsername(), "OAUTH2_LOGIN_SUCCESS", getClientIp(), getUserAgent(), "User logged in via OAuth2");
+        }
+
+        return AuthResponse.builder()
+                .accessToken(accessToken)
+                .refreshToken(refreshToken)
+                .tokenType("Bearer")
+                .expiresIn(ttl)
+                .user(toUserResponse(principal, warehouseName))
                 .build();
     }
 
@@ -348,6 +474,10 @@ public class AuthService {
         }
         user.setPasswordHash(passwordEncoder.encode(req.getNewPassword()));
         userRepository.save(user);
+
+        if (securityAuditService != null) {
+            securityAuditService.logEvent(user.getUsername(), "PASSWORD_CHANGED", getClientIp(), getUserAgent(), "User changed password via profile");
+        }
     }
 
     @Transactional
@@ -361,6 +491,76 @@ public class AuthService {
     public List<UserResponse> getAllUsers() {
         return userRepository.findAllActive().stream()
                 .map(this::mapToResponse).toList();
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // FORGOT / RESET PASSWORD & LOGOUT
+    // ─────────────────────────────────────────────────────────
+    public void forgotPassword(String email, String ip) {
+        if (!redisTokenService.checkAndIncrementRateLimit(email, ip)) {
+            throw new BusinessException("RATE_LIMIT", "Bạn đã yêu cầu gửi quá nhiều mã OTP. Vui lòng thử lại sau 15 phút.");
+        }
+
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new BusinessException("NOT_FOUND", "Không tìm thấy tài khoản với email này"));
+
+        if (!user.getIsActive()) {
+            throw new BusinessException("INACTIVE_USER", "Tài khoản đã bị khóa");
+        }
+
+        // Generate 6-digit OTP
+        String otp = String.format("%06d", new java.util.Random().nextInt(999999));
+        
+        redisTokenService.saveOtp(email, otp);
+        emailService.sendForgotPasswordEmail(email, otp);
+    }
+
+    @Transactional
+    public void resetPassword(String email, String otp, String newPassword) {
+        if (!redisTokenService.validateAndRemoveOtp(email, otp)) {
+            throw new BusinessException("INVALID_OTP", "Mã OTP không hợp lệ hoặc đã hết hạn");
+        }
+
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new BusinessException("NOT_FOUND", "Không tìm thấy tài khoản với email này"));
+
+        user.setPasswordHash(passwordEncoder.encode(newPassword));
+        userRepository.save(user);
+
+        if (securityAuditService != null) {
+            securityAuditService.logEvent(user.getUsername(), "PASSWORD_CHANGED", getClientIp(), getUserAgent(), "User reset password via forgot password flow");
+        }
+    }
+
+    public void logout(String token) {
+        if (token == null || token.isBlank()) return;
+        
+        try {
+            if (jwtTokenProvider.validateToken(token)) {
+                String jti = jwtTokenProvider.getJtiFromToken(token);
+                java.util.Date expiration = jwtTokenProvider.getExpirationFromToken(token);
+                
+                long remainingTimeMs = expiration.getTime() - System.currentTimeMillis();
+                if (remainingTimeMs > 0) {
+                    redisTokenService.blacklistJti(jti, remainingTimeMs);
+                }
+                
+                String username = jwtTokenProvider.getUsernameFromToken(token);
+                if (securityAuditService != null) {
+                    securityAuditService.logEvent(username, "LOGOUT", getClientIp(), getUserAgent(), "User logged out successfully");
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Error processing logout: {}", e.getMessage());
+        }
+    }
+
+    @Transactional
+    public void unlockUser(String targetUsername, String adminIp, String adminUserAgent) {
+        redisTokenService.unlockUser(targetUsername);
+        if (securityAuditService != null) {
+            securityAuditService.logAccountUnlocked(targetUsername, adminIp, adminUserAgent, "Admin unlocked this account manually");
+        }
     }
 
     // ─────────────────────────────────────────────────────────

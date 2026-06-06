@@ -4,8 +4,13 @@ import lombok.Builder;
 import lombok.Data;
 import java.util.UUID;
 
+import lombok.AllArgsConstructor;
+import lombok.NoArgsConstructor;
+
 @Data
 @Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class CategoryResponse {
     private UUID id;
     private UUID parentId;

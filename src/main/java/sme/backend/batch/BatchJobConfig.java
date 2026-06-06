@@ -25,16 +25,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Spring Batch Jobs:
- *
- * 1. inventorySnapshotJob — Chạy 23:59 mỗi ngày
- * → Tính giá trị tồn kho (qty * MAC) và lưu snapshot
- * → Phục vụ REP-03 (Báo cáo giá trị tồn kho)
- *
- * 2. lowStockScanJob — Chạy mỗi 30 phút
- * → Quét tồn kho thấp, gửi notification hàng loạt
- */
 @Configuration
 @RequiredArgsConstructor
 @Slf4j

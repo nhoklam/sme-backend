@@ -2,6 +2,7 @@ package sme.backend.repository;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -36,6 +37,7 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
         """)
     List<Order> findBOPISReadyByWarehouse(@Param("wid") UUID warehouseId);
 
+    @EntityGraph(attributePaths = {"items"})
     Page<Order> findByCustomerIdOrderByCreatedAtDesc(UUID customerId, Pageable pageable);
 
     Page<Order> findByAssignedWarehouseIdAndStatusOrderByCreatedAtDesc(UUID warehouseId, Order.OrderStatus status, Pageable pageable);
@@ -148,5 +150,5 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
                                                 @Param("cancelledStatus") Order.OrderStatus cancelledStatus);
 
     @Query("SELECT o FROM Order o WHERE o.paymentMethod != 'COD' AND o.paymentStatus = 'UNPAID' AND o.status = 'PAYMENT_PENDING' AND o.createdAt <= :expiryTime")
-    List<Order> findExpiredPendingOrders(@Param("expiryTime") Instant expiryTime);
+    org.springframework.data.domain.Slice<Order> findExpiredPendingOrders(@Param("expiryTime") Instant expiryTime, Pageable pageable);
 }

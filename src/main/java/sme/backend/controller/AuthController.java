@@ -20,6 +20,8 @@ import sme.backend.service.AuthService;
 import sme.backend.entity.User;
 import sme.backend.exception.BusinessException;
 
+import jakarta.servlet.http.HttpServletRequest;
+
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -65,6 +67,17 @@ public class AuthController {
         return ResponseEntity.ok(ApiResponse.ok(authService.refreshToken(refreshToken)));
     }
 
+    /** POST /auth/oauth2/token */
+    @PostMapping("/oauth2/token")
+    public ResponseEntity<ApiResponse<AuthResponse>> exchangeOAuth2Token(
+            @RequestBody Map<String, String> body) {
+        String code = body.get("code");
+        if (code == null || code.isBlank()) {
+            throw new BusinessException("INVALID_REQUEST", "Mã xác thực là bắt buộc");
+        }
+        return ResponseEntity.ok(ApiResponse.ok("Đăng nhập thành công", authService.exchangeOAuth2Token(code)));
+    }
+
     /** POST /auth/switch-branch */
     @PostMapping("/switch-branch")
     public ResponseEntity<ApiResponse<AuthResponse>> switchBranch(
@@ -95,6 +108,72 @@ public class AuthController {
             @Valid @RequestBody ChangePasswordRequest req) {
         authService.changePassword(principal.getId(), req);
         return ResponseEntity.ok(ApiResponse.ok("Đổi mật khẩu thành công", null));
+    }
+
+    /** POST /auth/logout */
+    @PostMapping("/logout")
+    public ResponseEntity<ApiResponse<Void>> logout(HttpServletRequest request) {
+        String bearerToken = request.getHeader("Authorization");
+        if (bearerToken != null && bearerToken.startsWith("Bearer ")) {
+            authService.logout(bearerToken.substring(7));
+        }
+        return ResponseEntity.ok(ApiResponse.ok("Đăng xuất thành công", null));
+    }
+
+    /** POST /auth/forgot-password */
+    @PostMapping("/forgot-password")
+    public ResponseEntity<ApiResponse<Void>> forgotPassword(
+            @RequestBody Map<String, String> body,
+            HttpServletRequest request) {
+        String email = body.get("email");
+        if (email == null || email.isBlank()) {
+            throw new BusinessException("INVALID_REQUEST", "Email là bắt buộc");
+        }
+        // Get client IP for rate limiting
+        String ip = request.getHeader("X-Forwarded-For");
+        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getRemoteAddr();
+        }
+        
+        authService.forgotPassword(email, ip);
+        return ResponseEntity.ok(ApiResponse.ok("Mã OTP đã được gửi đến email", null));
+    }
+
+    /** POST /auth/reset-password */
+    @PostMapping("/reset-password")
+    public ResponseEntity<ApiResponse<Void>> resetPassword(
+            @RequestBody Map<String, String> body) {
+        String email = body.get("email");
+        String otp = body.get("otp");
+        String newPassword = body.get("newPassword");
+        
+        if (email == null || otp == null || newPassword == null) {
+            throw new BusinessException("INVALID_REQUEST", "Thiếu thông tin bắt buộc");
+        }
+        
+        authService.resetPassword(email, otp, newPassword);
+        return ResponseEntity.ok(ApiResponse.ok("Đổi mật khẩu thành công", null));
+    }
+
+    /** POST /auth/unlock-user */
+    @PostMapping("/unlock-user")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<Void>> unlockUser(
+            @RequestBody Map<String, String> body,
+            HttpServletRequest request) {
+        String username = body.get("username");
+        if (username == null || username.isBlank()) {
+            throw new BusinessException("INVALID_REQUEST", "Username là bắt buộc");
+        }
+        
+        String ip = request.getHeader("X-Forwarded-For");
+        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getRemoteAddr();
+        }
+        String userAgent = request.getHeader("User-Agent");
+        
+        authService.unlockUser(username, ip, userAgent);
+        return ResponseEntity.ok(ApiResponse.ok("Mở khóa tài khoản thành công", null));
     }
 
     // ── User Management (ADMIN/MANAGER) ──────────────────────────

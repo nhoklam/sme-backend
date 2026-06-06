@@ -144,8 +144,8 @@ public class POSService {
                                                         .multiply(BigDecimal.valueOf(cartItem.getQuantity())))
                                         .build();
                         invoice.addItem(item);
-                        product.setSoldQuantity((product.getSoldQuantity() != null ? product.getSoldQuantity() : 0) + cartItem.getQuantity());
-                        productRepository.save(product);
+                        // NV-2: Dùng native query để update soldQuantity nguyên tử, tránh Lost Update và OptimisticLockException
+                        productRepository.incrementSoldQuantity(product.getId(), cartItem.getQuantity());
                         totalAmount = totalAmount.add(item.getSubtotal());
                 }
 
@@ -279,11 +279,8 @@ public class POSService {
                                         returnDestination,
                                         cashierId.toString());
 
-                        Product product = productRepository.findById(ri.productId()).orElse(null);
-                        if (product != null) {
-                                product.setSoldQuantity(Math.max(0, (product.getSoldQuantity() != null ? product.getSoldQuantity() : 0) - ri.quantity()));
-                                productRepository.save(product);
-                        }
+                        // NV-2: Dùng native query decrement an toàn
+                        productRepository.decrementSoldQuantity(ri.productId(), ri.quantity());
                 }
 
                 returnInvoice.setTotalAmount(totalRefund);
@@ -319,30 +316,40 @@ public class POSService {
         }
 
         private String generateInvoiceCode() {
-                return "INV-" + System.currentTimeMillis();
+                return "INV-" + System.currentTimeMillis() + "-" + java.util.UUID.randomUUID().toString().substring(0, 4).toUpperCase();
         }
 
         @Transactional(readOnly = true)
         public sme.backend.dto.response.PageResponse<InvoiceResponse> searchInvoices(
                         UUID shiftId, UUID warehouseId, String type, String keyword, Instant from, Instant to,
-                        String paymentMethod,
+                        String paymentMethod, UUID cashierId,
                         org.springframework.data.domain.Pageable pageable) {
 
                 org.springframework.data.domain.Page<Invoice> paged = invoiceRepository.searchInvoices(shiftId,
-                                warehouseId, type, keyword, from, to, paymentMethod, pageable);
+                                warehouseId, type, keyword, from, to, paymentMethod, cashierId, pageable);
+
+                java.util.List<UUID> customerIds = paged.getContent().stream().map(Invoice::getCustomerId).filter(java.util.Objects::nonNull).distinct().toList();
+                java.util.List<UUID> warehouseIds = paged.getContent().stream().map(Invoice::getWarehouseId).filter(java.util.Objects::nonNull).distinct().toList();
+                java.util.List<UUID> cashierIds = paged.getContent().stream().map(Invoice::getCashierId).filter(java.util.Objects::nonNull).distinct().toList();
+                java.util.Map<UUID, Customer> customerMap = customerIds.isEmpty() ? java.util.Collections.emptyMap() : customerRepository.findAllById(customerIds).stream().collect(java.util.stream.Collectors.toMap(Customer::getId, c -> c));
+                java.util.Map<UUID, Warehouse> warehouseMap = warehouseIds.isEmpty() ? java.util.Collections.emptyMap() : warehouseRepository.findAllById(warehouseIds).stream().collect(java.util.stream.Collectors.toMap(Warehouse::getId, w -> w));
+                java.util.Map<UUID, User> userMap = cashierIds.isEmpty() ? java.util.Collections.emptyMap() : userRepository.findAllById(cashierIds).stream().collect(java.util.stream.Collectors.toMap(User::getId, u -> u));
 
                 org.springframework.data.domain.Page<InvoiceResponse> mapped = paged.map(inv -> {
                         String customerName = "Khách lẻ";
                         String customerPhone = "—";
                         if (inv.getCustomerId() != null) {
-                                Optional<Customer> customerOpt = customerRepository.findById(inv.getCustomerId());
-                                customerName = customerOpt.map(Customer::getFullName).orElse("Khách lẻ");
-                                customerPhone = customerOpt.map(Customer::getPhoneNumber).orElse("—");
+                                Customer c = customerMap.get(inv.getCustomerId());
+                                if (c != null) {
+                                        customerName = c.getFullName();
+                                        customerPhone = c.getPhoneNumber();
+                                }
                         }
                         String warehouseName = null;
                         if (inv.getWarehouseId() != null) {
-                                warehouseName = warehouseRepository.findById(inv.getWarehouseId())
-                                                .map(Warehouse::getName).orElse("Kho không xác định");
+                                Warehouse w = warehouseMap.get(inv.getWarehouseId());
+                                if (w != null) warehouseName = w.getName();
+                                else warehouseName = "Kho không xác định";
                         }
 
                         // Lọc theo paymentMethod nếu có
@@ -359,25 +366,12 @@ public class POSService {
 
                         String cashierName = "Hệ thống";
                         if (inv.getCashierId() != null) {
-                                cashierName = userRepository.findById(inv.getCashierId())
-                                                .map(User::getFullName).orElse("Không rõ");
+                                User u = userMap.get(inv.getCashierId());
+                                if (u != null) cashierName = u.getFullName();
+                                else cashierName = "Không rõ";
                         }
 
-                        // Build items with macPrice for profit calculation
-                        List<InvoiceResponse.ItemResponse> itemResponses = inv.getItems() != null
-                                        ? inv.getItems().stream().map(it -> {
-                                                Product p = productRepository.findById(it.getProductId()).orElse(null);
-                                                return InvoiceResponse.ItemResponse.builder()
-                                                                .productId(it.getProductId())
-                                                                .productName(p != null ? p.getName()
-                                                                                : "Sản phẩm không xác định")
-                                                                .quantity(it.getQuantity())
-                                                                .unitPrice(it.getUnitPrice())
-                                                                .macPrice(it.getMacPrice())
-                                                                .subtotal(it.getSubtotal())
-                                                                .build();
-                                        }).toList()
-                                        : List.of();
+                        List<InvoiceResponse.ItemResponse> itemResponses = List.of();
 
                         return InvoiceResponse.builder()
                                         .id(inv.getId())
@@ -402,7 +396,7 @@ public class POSService {
         }
 
         private String generateReturnCode() {
-                return "RET-" + System.currentTimeMillis();
+                return "RET-" + System.currentTimeMillis() + "-" + java.util.UUID.randomUUID().toString().substring(0, 4).toUpperCase();
         }
 
         // ─────────────────────────────────────────────────────────
@@ -438,11 +432,8 @@ public class POSService {
                                                 "VOID_INVOICE",
                                                 managerId.toString());
                                                 
-                                Product product = productRepository.findById(item.getProductId()).orElse(null);
-                                if (product != null) {
-                                        product.setSoldQuantity(Math.max(0, (product.getSoldQuantity() != null ? product.getSoldQuantity() : 0) - item.getQuantity()));
-                                        productRepository.save(product);
-                                }
+                                // NV-2: Dùng native query decrement an toàn
+                                productRepository.decrementSoldQuantity(item.getProductId(), item.getQuantity());
                         }
                 }
 

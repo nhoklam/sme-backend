@@ -15,6 +15,7 @@ import java.util.UUID;
 public class AuditLogResponse {
     private String entityName;   // Tên bảng/đối tượng (VD: Sản phẩm, Đơn hàng)
     private UUID entityId;       // ID của đối tượng bị thay đổi
+    private String targetName;   // Tên hiển thị cụ thể của đối tượng (VD: Tên SP, Mã ĐH)
     private String actionType;   // Hành động (CREATE, UPDATE, DELETE)
     private String changedBy;    // Người thực hiện (Lấy từ updated_by / created_by)
     private Instant changedAt;   // Thời gian thực hiện

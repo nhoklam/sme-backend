@@ -13,6 +13,7 @@ import org.springframework.stereotype.Repository;
 import sme.backend.entity.Inventory;
 import sme.backend.dto.response.LowStockItem;
 import sme.backend.dto.response.InventoryResponse;
+import sme.backend.config.LockTimeoutConstants;
 
 import java.util.List;
 import java.util.Map;
@@ -25,9 +26,18 @@ public interface InventoryRepository extends JpaRepository<Inventory, UUID> {
     Optional<Inventory> findByProductIdAndWarehouseId(UUID productId, UUID warehouseId);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @QueryHints({ @QueryHint(name = "jakarta.persistence.lock.timeout", value = "3000") })
+    @QueryHints({ @QueryHint(name = "jakarta.persistence.lock.timeout", value = LockTimeoutConstants.POS_LOCK_TIMEOUT_MS) })
     @Query("SELECT i FROM Inventory i WHERE i.productId = :pid AND i.warehouseId = :wid")
     Optional<Inventory> findByProductAndWarehouseWithLock(
+            @Param("pid") UUID productId,
+            @Param("wid") UUID warehouseId);
+
+    // NV-2: Khóa riêng cho Admin (importStock, adjustInventory).
+    // Timeout 10s vì đây là tác vụ quản trị, ít concurrent hơn POS, có thể đợi lâu hơn để tránh fail ngang.
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @QueryHints({ @QueryHint(name = "jakarta.persistence.lock.timeout", value = LockTimeoutConstants.ADMIN_LOCK_TIMEOUT_MS) })
+    @Query("SELECT i FROM Inventory i WHERE i.productId = :pid AND i.warehouseId = :wid")
+    Optional<Inventory> findByProductAndWarehouseWithAdminLock(
             @Param("pid") UUID productId,
             @Param("wid") UUID warehouseId);
 

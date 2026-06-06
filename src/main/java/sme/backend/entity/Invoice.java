@@ -83,10 +83,12 @@ public class Invoice extends BaseEntity {
     private String note;
 
     @OneToMany(mappedBy = "invoice", cascade = CascadeType.ALL, orphanRemoval = true)
+    @org.hibernate.annotations.BatchSize(size = 50)
     @Builder.Default
     private List<InvoiceItem> items = new ArrayList<>();
 
     @OneToMany(mappedBy = "invoice", cascade = CascadeType.ALL, orphanRemoval = true)
+    @org.hibernate.annotations.BatchSize(size = 50)
     @Builder.Default
     private List<InvoicePayment> payments = new ArrayList<>();
 

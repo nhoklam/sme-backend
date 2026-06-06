@@ -51,6 +51,27 @@ public class User extends BaseEntity {
     @Column(name = "pos_settings", columnDefinition = "TEXT")
     private String posSettings;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "primary_provider", length = 50)
+    @Builder.Default
+    private AuthProvider primaryProvider = AuthProvider.LOCAL;
+
+    @Column(name = "provider_id", length = 255)
+    private String providerId;
+
+    @Column(name = "avatar_url", length = 1000)
+    private String avatarUrl;
+
+    @Column(name = "is_oauth2_linked")
+    @Builder.Default
+    private Boolean isOauth2Linked = false;
+
+    public enum AuthProvider {
+        LOCAL,
+        GOOGLE,
+        FACEBOOK
+    }
+
     public enum UserRole {
         ROLE_ADMIN,
         ROLE_MANAGER,

@@ -42,11 +42,6 @@ public class Inventory {
     @Builder.Default
     private Integer minQuantity = 0;
 
-    // KHÔI PHỤC LẠI NGUYÊN BẢN
-    @Version
-    @Column(nullable = false)
-    @Builder.Default
-    private Integer version = 0;
 
     @Transient
     public int getAvailableQuantity() {

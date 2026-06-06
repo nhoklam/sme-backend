@@ -85,6 +85,8 @@ public class WarehouseController {
                                 .provinceCode(body.getOrDefault("provinceCode", "00"))
                                 .address(body.get("address"))
                                 .phone(body.get("phone"))
+                                .latitude(body.get("latitude") != null ? Double.parseDouble(body.get("latitude")) : null)
+                                .longitude(body.get("longitude") != null ? Double.parseDouble(body.get("longitude")) : null)
                                 .warehouseType(type)
                                 .isActive(true)
                                 .build();
@@ -111,6 +113,10 @@ public class WarehouseController {
                         w.setPhone(request.getPhone());
                 if (request.getWarehouseType() != null)
                         w.setWarehouseType(request.getWarehouseType());
+                if (request.getLatitude() != null)
+                        w.setLatitude(request.getLatitude());
+                if (request.getLongitude() != null)
+                        w.setLongitude(request.getLongitude());
 
                 if (request.getHasManagerId() != null && request.getHasManagerId()) {
                         w.setManagerId(request.getManagerId());

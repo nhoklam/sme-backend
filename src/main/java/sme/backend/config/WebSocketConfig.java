@@ -12,9 +12,6 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
-        // Khai báo cả 2 đường dẫn để Frontend dễ dàng kết nối
-        // LƯU Ý: KHÔNG thêm .withSockJS() ở cuối vì Frontend đang dùng chuẩn Raw
-        // WebSocket
         registry.addEndpoint("/ws", "/api/ws")
                 .setAllowedOriginPatterns("*");
     }

@@ -20,34 +20,34 @@ import java.util.List;
 public class ScheduledOrderExpiryJob {
 
     private final OrderRepository orderRepository;
-    private final InventoryService inventoryService;
+    private final sme.backend.service.OrderService orderService;
+
+    private static final int EXPIRY_JOB_CHUNK_SIZE = 100;
 
     @Scheduled(fixedDelay = 900000)
-    @Transactional
     public void cancelExpiredPendingOrders() {
         log.info("Bắt đầu quét đơn hàng thanh toán quá hạn...");
         Instant expiryTime = Instant.now().minus(30, ChronoUnit.MINUTES);
 
-        List<Order> expiredOrders = orderRepository.findExpiredPendingOrders(expiryTime);
+        org.springframework.data.domain.Pageable pageable = org.springframework.data.domain.PageRequest.of(0, EXPIRY_JOB_CHUNK_SIZE);
+        org.springframework.data.domain.Slice<Order> slice = orderRepository.findExpiredPendingOrders(expiryTime, pageable);
 
-        for (Order order : expiredOrders) {
-            try {
-                // 1. Giải phóng tồn kho cho từng item
-                for (OrderItem item : order.getItems()) {
-                    if (order.getAssignedWarehouseId() != null) {
-                        inventoryService.releaseReservation(item.getProductId(), order.getAssignedWarehouseId(),
-                                item.getQuantity(), order.getId(), "SYSTEM");
-                    }
+        while (slice.hasContent()) {
+            for (Order order : slice.getContent()) {
+                try {
+                    orderService.cancelOrderWithCleanup(order.getId(), "Hệ thống tự hủy: quá thời gian thanh toán", "SYSTEM");
+                    log.info("Auto-cancelled expired order: {}", order.getCode());
+                } catch (Exception e) {
+                    log.error("Lỗi khi hủy đơn hàng quá hạn {}: {}", order.getCode(), e.getMessage());
                 }
-
-                order.transitionTo(Order.OrderStatus.CANCELLED, "Hệ thống tự hủy: quá thời gian thanh toán", "SYSTEM");
-                orderRepository.save(order);
-
-                log.info("Auto-cancelled expired order: {}", order.getCode());
-            } catch (Exception e) {
-                log.error("Lỗi khi hủy đơn hàng quá hạn {}: {}", order.getCode(), e.getMessage());
+            }
+            if (slice.hasNext()) {
+                slice = orderRepository.findExpiredPendingOrders(expiryTime, slice.nextPageable());
+            } else {
+                break;
             }
         }
+        
         log.info("Hoàn tất quét đơn hàng thanh toán quá hạn.");
     }
 }

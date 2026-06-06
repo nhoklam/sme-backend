@@ -8,7 +8,11 @@ import java.time.Instant;
 import java.util.UUID;
 import java.util.List;
 
+import lombok.AllArgsConstructor;
+import lombok.NoArgsConstructor;
+
 @Data @Builder
+@NoArgsConstructor @AllArgsConstructor
 public class ProductResponse {
     private UUID id;
     private UUID categoryId;

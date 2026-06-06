@@ -12,13 +12,16 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import sme.backend.security.CustomUserDetailsService;
 import sme.backend.security.filter.JwtAuthEntryPoint;
 import sme.backend.security.filter.JwtAuthenticationFilter;
+import sme.backend.security.oauth2.CustomOAuth2UserService;
+import sme.backend.security.oauth2.HttpCookieOAuth2AuthorizationRequestRepository;
+import sme.backend.security.oauth2.OAuth2AuthenticationFailureHandler;
+import sme.backend.security.oauth2.OAuth2AuthenticationSuccessHandler;
 
 @Configuration
 @EnableWebSecurity
@@ -29,17 +32,16 @@ public class SecurityConfig {
     private final CustomUserDetailsService userDetailsService;
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
     private final JwtAuthEntryPoint jwtAuthEntryPoint;
-
-    @Bean
-    public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder(12);
-    }
+    private final CustomOAuth2UserService customOAuth2UserService;
+    private final OAuth2AuthenticationSuccessHandler oAuth2AuthenticationSuccessHandler;
+    private final OAuth2AuthenticationFailureHandler oAuth2AuthenticationFailureHandler;
+    private final HttpCookieOAuth2AuthorizationRequestRepository httpCookieOAuth2AuthorizationRequestRepository;
+    private final PasswordEncoder passwordEncoder;
 
     @Bean
     public DaoAuthenticationProvider authenticationProvider() {
-        DaoAuthenticationProvider provider = new DaoAuthenticationProvider();
+        DaoAuthenticationProvider provider = new DaoAuthenticationProvider(passwordEncoder);
         provider.setUserDetailsService(userDetailsService);
-        provider.setPasswordEncoder(passwordEncoder());
         return provider;
     }
 
@@ -65,13 +67,27 @@ public class SecurityConfig {
                 // Entry point 401
                 .exceptionHandling(ex -> ex.authenticationEntryPoint(jwtAuthEntryPoint))
 
+                // OAuth2 Login
+                .oauth2Login(oauth2 -> oauth2
+                        .authorizationEndpoint(auth -> auth
+                                .baseUri("/oauth2/authorize")
+                                .authorizationRequestRepository(httpCookieOAuth2AuthorizationRequestRepository)
+                        )
+                        .userInfoEndpoint(userInfo -> userInfo
+                                .userService(customOAuth2UserService)
+                        )
+                        .successHandler(oAuth2AuthenticationSuccessHandler)
+                        .failureHandler(oAuth2AuthenticationFailureHandler)
+                )
+
                 // ============================================================
                 // PHÂN QUYỀN THEO ROLE (RBAC)
                 // ============================================================
                 .authorizeHttpRequests(auth -> auth
 
                         // Public endpoints
-                        .requestMatchers("/auth/switch-branch").hasRole("ADMIN")
+                        // Public endpoints
+                        .requestMatchers("/auth/switch-branch", "/auth/unlock-user").hasRole("ADMIN")
                         .requestMatchers("/auth/**").permitAll()
                         .requestMatchers("/payments/**").permitAll()
                         .requestMatchers("/actuator/health").permitAll()

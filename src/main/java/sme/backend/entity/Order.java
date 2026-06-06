@@ -55,6 +55,12 @@ public class Order extends BaseEntity {
     @Column(name = "province_code", nullable = false, length = 20)
     private String provinceCode;
 
+    @Column(name = "shipping_latitude")
+    private Double shippingLatitude;
+
+    @Column(name = "shipping_longitude")
+    private Double shippingLongitude;
+
     @Column(name = "total_amount", nullable = false, precision = 19, scale = 4)
     @Builder.Default
     private BigDecimal totalAmount = BigDecimal.ZERO;
@@ -103,11 +109,13 @@ public class Order extends BaseEntity {
 
     @NotAudited // Không track lịch sử của list items con
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
+    @org.hibernate.annotations.BatchSize(size = 50)
     @Builder.Default
     private List<OrderItem> items = new ArrayList<>();
 
     @NotAudited // Không track lịch sử của list status con
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
+    @org.hibernate.annotations.BatchSize(size = 50)
     @Builder.Default
     private List<OrderStatusHistory> statusHistory = new ArrayList<>();
 

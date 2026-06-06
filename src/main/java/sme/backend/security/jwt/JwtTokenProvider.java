@@ -53,6 +53,7 @@ public class JwtTokenProvider {
 
         JwtBuilder builder = Jwts.builder()
                 .subject(userPrincipal.getUsername())
+                .id(UUID.randomUUID().toString())
                 .claim("userId", userPrincipal.getId().toString())
                 .claim("role", userPrincipal.getRole().name())
                 .claim("fullName", userPrincipal.getFullName())
@@ -81,6 +82,7 @@ public class JwtTokenProvider {
 
         return Jwts.builder()
                 .subject(username)
+                .id(UUID.randomUUID().toString())
                 .claim("type", "REFRESH")
                 .issuedAt(now)
                 .expiration(expiry)
@@ -104,6 +106,14 @@ public class JwtTokenProvider {
     public UUID getWarehouseIdFromToken(String token) {
         String wid = parseClaims(token).get("warehouseId", String.class);
         return wid != null ? UUID.fromString(wid) : null;
+    }
+
+    public String getJtiFromToken(String token) {
+        return parseClaims(token).getId();
+    }
+
+    public Date getExpirationFromToken(String token) {
+        return parseClaims(token).getExpiration();
     }
 
     public boolean validateToken(String token) {

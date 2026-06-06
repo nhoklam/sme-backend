@@ -51,6 +51,16 @@
 
         @Bean
         public RedisCacheManager cacheManager(RedisConnectionFactory factory) {
+                ObjectMapper mapper = new ObjectMapper();
+                mapper.registerModule(new JavaTimeModule());
+                mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+                mapper.activateDefaultTyping(
+                        mapper.getPolymorphicTypeValidator(),
+                        ObjectMapper.DefaultTyping.NON_FINAL,
+                        JsonTypeInfo.As.PROPERTY
+                );
+                GenericJackson2JsonRedisSerializer jsonSerializer = new GenericJackson2JsonRedisSerializer(mapper);
+
                 RedisCacheConfiguration defaultConfig = RedisCacheConfiguration.defaultCacheConfig()
                         .entryTtl(Duration.ofMinutes(30))
                         .serializeKeysWith(
@@ -58,7 +68,7 @@
                                         .fromSerializer(new StringRedisSerializer()))
                         .serializeValuesWith(
                                 RedisSerializationContext.SerializationPair
-                                        .fromSerializer(new GenericJackson2JsonRedisSerializer()))
+                                        .fromSerializer(jsonSerializer))
                         .disableCachingNullValues();
 
                 return RedisCacheManager.builder(factory)

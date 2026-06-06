@@ -253,8 +253,9 @@ public class ProductService {
     @Transactional(readOnly = true)
     @Cacheable(value = "products", key = "#barcode + '_' + (#warehouseId != null ? #warehouseId.toString() : 'ALL')")
     public ProductResponse getByBarcode(String barcode, UUID warehouseId) {
-        Product product = productRepository.findByIsbnBarcodeAndIsActiveTrue(barcode)
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy sản phẩm với mã vạch: " + barcode));
+        Product product = productRepository.findByIsbnBarcodeIgnoreCaseAndIsActiveTrue(barcode)
+                .orElseGet(() -> productRepository.findBySkuIgnoreCaseAndIsActiveTrue(barcode)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy sản phẩm với mã vạch hoặc SKU: " + barcode)));
         Integer available = null;
         if (warehouseId != null) {
             available = inventoryRepository.findByProductIdAndWarehouseId(product.getId(), warehouseId)
@@ -270,7 +271,8 @@ public class ProductService {
     @Transactional(readOnly = true)
     public Page<ProductResponse> search(String keyword, UUID categoryId, UUID supplierId, UUID warehouseId,
                                          Boolean isActive, Double minPrice, Double maxPrice, Pageable pageable) {
-        Page<Product> productPage = productRepository.searchProducts(keyword, categoryId, supplierId, isActive, minPrice, maxPrice, pageable);
+        String slugKeyword = keyword == null ? "" : generateSlug(keyword).replace("-", "%");
+        Page<Product> productPage = productRepository.searchProducts(keyword, slugKeyword, categoryId, supplierId, isActive, minPrice, maxPrice, pageable);
         if (productPage.isEmpty()) return productPage.map(p -> mapToResponse(p, 0));
 
         List<UUID> categoryIds = productPage.getContent().stream()
@@ -298,22 +300,43 @@ public class ProductService {
     }
 
     @Transactional(readOnly = true)
+    @Cacheable(value = "products", key = "#id.toString()")
     public ProductResponse getById(UUID id) {
-        Product p = productRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Product", id));
-        Integer availableQty = inventoryRepository.getTotalAvailableQuantity(p.getId());
-        // Load đầy đủ imageUrls khi xem chi tiết
-        List<String> imageUrls = productImageRepository
-                .findByProductIdOrderBySortOrderAscCreatedAtAsc(id)
-                .stream().map(ProductImage::getImageUrl).toList();
-        String catName = categoryRepository.findById(p.getCategoryId())
-                .map(Category::getName).orElse("Chưa phân loại");
-        return buildResponse(p, catName, availableQty, imageUrls);
+        try {
+            log.info("Fetching product details for ID: {}", id);
+            Product p = productRepository.findById(id)
+                    .orElseThrow(() -> new ResourceNotFoundException("Product", id));
+            log.info("Found product: {}", p.getName());
+
+            log.info("Fetching inventory for product ID: {}", p.getId());
+            Integer availableQty = inventoryRepository.getTotalAvailableQuantity(p.getId());
+
+            log.info("Fetching images for product ID: {}", id);
+            List<String> imageUrls = productImageRepository
+                    .findByProductIdOrderBySortOrderAscCreatedAtAsc(id)
+                    .stream().map(ProductImage::getImageUrl).toList();
+
+            log.info("Fetching category for ID: {}", p.getCategoryId());
+            String catName = "Chưa phân loại";
+            if (p.getCategoryId() != null) {
+                catName = categoryRepository.findById(p.getCategoryId())
+                        .map(Category::getName).orElse("Chưa phân loại");
+            }
+
+            log.info("Building response for product ID: {}", id);
+            return buildResponse(p, catName, availableQty, imageUrls);
+        } catch (Exception e) {
+            log.error("Error occurred while fetching product by ID: {}", id, e);
+            throw e; // Rethrow to maintain exception handling behavior
+        }
     }
 
     public ProductResponse mapToResponse(Product p, Integer availableQty) {
-        String catName = categoryRepository.findById(p.getCategoryId())
-                .map(Category::getName).orElse("Chưa phân loại");
+        String catName = "Chưa phân loại";
+        if (p.getCategoryId() != null) {
+            catName = categoryRepository.findById(p.getCategoryId())
+                    .map(Category::getName).orElse("Chưa phân loại");
+        }
         List<String> imageUrls = productImageRepository
                 .findByProductIdOrderBySortOrderAscCreatedAtAsc(p.getId())
                 .stream().map(ProductImage::getImageUrl).toList();

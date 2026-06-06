@@ -108,7 +108,7 @@ public class CustomerController {
             customer.setProvinceCode((String) body.get("provinceCode"));
         }
         
-        return ResponseEntity.ok(ApiResponse.ok("Cập nhật thành công", customerRepository.save(customer)));
+        return ResponseEntity.ok(ApiResponse.ok("Cập nhật thành công", customerService.saveCustomer(customer)));
     }
 
     // --- WISHLIST ---
@@ -203,9 +203,7 @@ public class CustomerController {
     @GetMapping("/lookup")
     @PreAuthorize("hasAnyRole('CASHIER','MANAGER','ADMIN')")
     public ResponseEntity<ApiResponse<Customer>> lookupByPhone(@RequestParam String phone) {
-        Customer customer = customerRepository.findByPhoneNumberAndIsActiveTrue(phone)
-                .orElseThrow(() -> new ResourceNotFoundException(
-                        "Không tìm thấy khách hàng với SĐT: " + phone));
+        Customer customer = customerService.getByPhone(phone);
         return ResponseEntity.ok(ApiResponse.ok(customer));
     }
 
@@ -260,6 +258,14 @@ public class CustomerController {
         String custName = customer != null ? customer.getFullName() : null;
         String custPhone = customer != null ? customer.getPhoneNumber() : null;
 
+        // NV-5: Bulk fetch products to avoid N+1 queries across invoices and orders
+        java.util.Set<UUID> allProductIds = new java.util.HashSet<>();
+        invoices.getContent().forEach(inv -> inv.getItems().forEach(i -> allProductIds.add(i.getProductId())));
+        orders.getContent().forEach(ord -> ord.getItems().forEach(i -> allProductIds.add(i.getProductId())));
+
+        java.util.Map<UUID, sme.backend.entity.Product> productMap = allProductIds.isEmpty() ? java.util.Collections.emptyMap() :
+                productRepository.findAllById(allProductIds).stream().collect(java.util.stream.Collectors.toMap(sme.backend.entity.Product::getId, p -> p));
+
         List<Map<String, Object>> invoiceSummary = new java.util.ArrayList<>();
         for (Invoice inv : invoices.getContent()) {
             Map<String, Object> map = new java.util.HashMap<>();
@@ -274,16 +280,15 @@ public class CustomerController {
             
             List<Map<String, Object>> itemsList = new java.util.ArrayList<>();
             for (sme.backend.entity.InvoiceItem item : inv.getItems()) {
-                String productName = productRepository.findById(item.getProductId())
-                        .map(sme.backend.entity.Product::getName)
-                        .orElse("Sản phẩm không xác định");
+                sme.backend.entity.Product p = productMap.get(item.getProductId());
+                String productName = p != null ? p.getName() : "Sản phẩm không xác định";
                 Map<String, Object> itemMap = new java.util.HashMap<>();
                 itemMap.put("productId", item.getProductId());
                 itemMap.put("productName", productName);
                 itemMap.put("quantity", item.getQuantity());
                 itemMap.put("unitPrice", item.getUnitPrice());
                 itemMap.put("subtotal", item.getSubtotal());
-                productRepository.findById(item.getProductId()).ifPresent(p -> itemMap.put("imageUrl", p.getImageUrl()));
+                if (p != null) itemMap.put("imageUrl", p.getImageUrl());
                 itemsList.add(itemMap);
             }
             map.put("items", itemsList);
@@ -310,13 +315,19 @@ public class CustomerController {
             map.put("shippingFee", ord.getShippingFee());
             map.put("discountAmount", ord.getDiscountAmount());
             
+            // NV-5: Bulk fetch reviews for this order's items
+            java.util.List<UUID> orderProductIds = ord.getItems().stream().map(sme.backend.entity.OrderItem::getProductId).toList();
+            java.util.Set<UUID> reviewedProductIds = new java.util.HashSet<>();
+            if (!orderProductIds.isEmpty()) {
+                productReviewRepository.findByProductIdInAndCustomerIdAndOrderId(orderProductIds, id, ord.getId())
+                        .forEach(r -> reviewedProductIds.add(r.getProductId()));
+            }
+
             List<Map<String, Object>> itemsList = new java.util.ArrayList<>();
             for (sme.backend.entity.OrderItem item : ord.getItems()) {
-                String productName = productRepository.findById(item.getProductId())
-                        .map(sme.backend.entity.Product::getName)
-                        .orElse("Sản phẩm không xác định");
-                boolean isRev = productReviewRepository.existsByProductIdAndCustomerIdAndOrderId(
-                        item.getProductId(), id, ord.getId());
+                sme.backend.entity.Product p = productMap.get(item.getProductId());
+                String productName = p != null ? p.getName() : "Sản phẩm không xác định";
+                boolean isRev = reviewedProductIds.contains(item.getProductId());
                 Map<String, Object> itemMap = new java.util.HashMap<>();
                 itemMap.put("productId", item.getProductId());
                 itemMap.put("productName", productName);
@@ -324,7 +335,7 @@ public class CustomerController {
                 itemMap.put("unitPrice", item.getUnitPrice());
                 itemMap.put("subtotal", item.getSubtotal());
                 itemMap.put("isReviewed", isRev);
-                productRepository.findById(item.getProductId()).ifPresent(p -> itemMap.put("imageUrl", p.getImageUrl()));
+                if (p != null) itemMap.put("imageUrl", p.getImageUrl());
                 itemsList.add(itemMap);
             }
             map.put("items", itemsList);
@@ -367,7 +378,7 @@ public class CustomerController {
                 .build();
 
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ApiResponse.created(customerRepository.save(customer)));
+                .body(ApiResponse.created(customerService.saveCustomer(customer)));
     }
 
     // === THÊM ENDPOINT MỚI: POST /customers/bulk ===
@@ -414,16 +425,14 @@ public class CustomerController {
         if (body.containsKey("notes")) customer.setNotes((String) body.get("notes"));
         if (body.containsKey("isActive")) customer.setIsActive((Boolean) body.get("isActive"));
 
-        return ResponseEntity.ok(ApiResponse.ok("Cập nhật thành công", customerRepository.save(customer)));
+        return ResponseEntity.ok(ApiResponse.ok("Cập nhật thành công", customerService.saveCustomer(customer)));
     }
 
     /** GET /customers/{id} */
     @GetMapping("/{id}")
     @PreAuthorize("hasAnyRole('CASHIER','MANAGER','ADMIN')")
     public ResponseEntity<ApiResponse<Customer>> getById(@PathVariable UUID id) {
-        return ResponseEntity.ok(ApiResponse.ok(
-                customerRepository.findById(id)
-                        .orElseThrow(() -> new ResourceNotFoundException("Customer", id))));
+        return ResponseEntity.ok(ApiResponse.ok(customerService.getById(id)));
     }
 
     @GetMapping("/recalculate-spent-all")
@@ -437,7 +446,7 @@ public class CustomerController {
                     .stream().filter(o -> o.getStatus() == Order.OrderStatus.DELIVERED)
                     .map(Order::getFinalAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
             c.setTotalSpent(totalInvoice.add(totalOrder));
-            customerRepository.save(c);
+            customerService.saveCustomer(c);
         }
         return "OK";
     }

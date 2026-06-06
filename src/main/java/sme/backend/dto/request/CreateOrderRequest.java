@@ -16,6 +16,9 @@ public class CreateOrderRequest {
     @NotBlank private String shippingPhone;
     @NotBlank private String shippingAddress;
     @NotBlank private String provinceCode;
+    
+    private Double shippingLatitude;
+    private Double shippingLongitude;
 
     @NotEmpty @Valid
     private List<OrderItemRequest> items;

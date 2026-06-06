@@ -282,6 +282,7 @@ public class POSController {
             @RequestParam(required = false) Instant from,
             @RequestParam(required = false) Instant to,
             @RequestParam(required = false) String paymentMethod,
+            @RequestParam(required = false) UUID cashierId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(required = false) UUID warehouseId) {
@@ -295,7 +296,7 @@ public class POSController {
         String pm = (paymentMethod != null && !paymentMethod.trim().isEmpty()) ? paymentMethod.trim() : null;
         String t = (type != null && !type.trim().isEmpty()) ? type.trim() : null;
         return ResponseEntity.ok(ApiResponse
-                .ok(posService.searchInvoices(shiftId, targetWarehouseId, t, kw, from, to, pm, PageRequest.of(page, size))));
+                .ok(posService.searchInvoices(shiftId, targetWarehouseId, t, kw, from, to, pm, cashierId, PageRequest.of(page, size))));
     }
 
     @GetMapping("/invoices/code/{code}")

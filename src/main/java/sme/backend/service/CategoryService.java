@@ -1,6 +1,8 @@
 package sme.backend.service;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import sme.backend.dto.request.CategoryRequest;
@@ -23,6 +25,7 @@ public class CategoryService {
     private final CategoryRepository categoryRepository;
 
     @Transactional(readOnly = true)
+    @Cacheable(value = "categories", key = "'all_categories'")
     public List<CategoryResponse> getAllCategories() {
         return categoryRepository.findAll().stream()
                 .sorted((c1, c2) -> Integer.compare(c1.getSortOrder() != null ? c1.getSortOrder() : 0, 
@@ -32,6 +35,7 @@ public class CategoryService {
     }
 
     @Transactional
+    @CacheEvict(value = "categories", allEntries = true)
     public CategoryResponse createCategory(CategoryRequest req) {
         String slug = generateSlug(req.getName());
         if (categoryRepository.existsBySlug(slug)) {
@@ -51,6 +55,7 @@ public class CategoryService {
     }
 
     @Transactional
+    @CacheEvict(value = "categories", allEntries = true)
     public CategoryResponse updateCategory(UUID id, CategoryRequest req) {
         Category category = categoryRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Category", id));
