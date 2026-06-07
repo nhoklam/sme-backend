@@ -15,8 +15,9 @@ spring:
       client:
         registration:
           google:
-  client-id: ${GOOGLE_CLIENT_ID}
-  client-secret: ${GOOGLE_CLIENT_SECRET}
+            client-id: ${OAUTH2_GOOGLE_CLIENT_ID:your_google_client_id}
+            client-secret: ${OAUTH2_GOOGLE_CLIENT_SECRET:your_google_client_secret}
+            scope: email, profile
 
   # ========================
   # DATABASE (PostgreSQL)
@@ -197,15 +198,15 @@ app:
 # PAYMENT GATEWAYS
 # ========================
 payos:
-  client-id: "b1f00f51-1a3e-4f76-8a3a-4e4792f7a10d"
-  api-key: "91decc1a-6f01-4a7a-91d2-40f98d581bbe"
-  checksum-key: "4823a880e9f9773f399226babb83718161c6402c6e3a9c88ef49db9529f3423d"
+  client-id: ${PAYOS_CLIENT_ID:your_payos_client_id}
+  api-key: ${PAYOS_API_KEY:your_payos_api_key}
+  checksum-key: ${PAYOS_CHECKSUM_KEY:your_payos_checksum_key}
 
 vnpay:
-  tmn-code: "Q6OZXHS8"
-  hash-secret: "UCNLY2AYBOUTQO2EABG7E2G1K952T1WA"
-  pay-url: "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html"
-  return-url: "http://localhost:8080/api/vnpay/vnpay-return"
+  tmn-code: ${VNPAY_TMN_CODE:your_vnpay_tmn_code}
+  hash-secret: ${VNPAY_HASH_SECRET:your_vnpay_hash_secret}
+  pay-url: ${VNPAY_PAY_URL:https://sandbox.vnpayment.vn/paymentv2/vpcpay.html}
+  return-url: ${VNPAY_RETURN_URL:http://localhost:8080/api/vnpay/vnpay-return}
 
 # ========================
 # LOGGING

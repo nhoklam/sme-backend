@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.*;
 import sme.backend.dto.request.ChangePasswordRequest;
 import sme.backend.dto.request.CreateUserRequest;
 import sme.backend.dto.request.LoginRequest;
+import sme.backend.dto.request.ResetPasswordRequest;
 import sme.backend.dto.request.SwitchBranchRequest;
 import sme.backend.dto.request.CustomerRegisterRequest;
 import sme.backend.dto.response.ApiResponse;
@@ -92,13 +93,8 @@ public class AuthController {
     @GetMapping("/me")
     public ResponseEntity<ApiResponse<UserResponse>> getCurrentUser(
             @AuthenticationPrincipal UserPrincipal principal) {
-        // ĐÃ SỬA: Loại bỏ authService.mapToResponse() vì luồng này đã trả về
-        // UserResponse
         return ResponseEntity.ok(ApiResponse.ok(
-                authService.getAllUsers().stream()
-                        .filter(u -> u.getId().equals(principal.getId()))
-                        .findFirst()
-                        .orElseThrow()));
+                authService.getUserResponseById(principal.getId())));
     }
 
     /** PUT /auth/change-password */
@@ -112,11 +108,17 @@ public class AuthController {
 
     /** POST /auth/logout */
     @PostMapping("/logout")
-    public ResponseEntity<ApiResponse<Void>> logout(HttpServletRequest request) {
+    public ResponseEntity<ApiResponse<Void>> logout(
+            @RequestBody(required = false) Map<String, String> body,
+            HttpServletRequest request) {
+        String accessToken = null;
         String bearerToken = request.getHeader("Authorization");
         if (bearerToken != null && bearerToken.startsWith("Bearer ")) {
-            authService.logout(bearerToken.substring(7));
+            accessToken = bearerToken.substring(7);
         }
+        String refreshToken = body != null ? body.get("refreshToken") : null;
+        
+        authService.logout(accessToken, refreshToken);
         return ResponseEntity.ok(ApiResponse.ok("Đăng xuất thành công", null));
     }
 
@@ -142,14 +144,10 @@ public class AuthController {
     /** POST /auth/reset-password */
     @PostMapping("/reset-password")
     public ResponseEntity<ApiResponse<Void>> resetPassword(
-            @RequestBody Map<String, String> body) {
-        String email = body.get("email");
-        String otp = body.get("otp");
-        String newPassword = body.get("newPassword");
-        
-        if (email == null || otp == null || newPassword == null) {
-            throw new BusinessException("INVALID_REQUEST", "Thiếu thông tin bắt buộc");
-        }
+            @Valid @RequestBody ResetPasswordRequest req) {
+        String email = req.getEmail();
+        String otp = req.getOtp();
+        String newPassword = req.getNewPassword();
         
         authService.resetPassword(email, otp, newPassword);
         return ResponseEntity.ok(ApiResponse.ok("Đổi mật khẩu thành công", null));

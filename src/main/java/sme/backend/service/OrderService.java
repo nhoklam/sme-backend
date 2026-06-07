@@ -109,7 +109,27 @@ public class OrderService {
 
         BigDecimal shippingFee = req.getShippingFee() != null ? req.getShippingFee() : BigDecimal.ZERO;
         BigDecimal discountAmount = req.getDiscountAmount() != null ? req.getDiscountAmount() : BigDecimal.ZERO;
-        BigDecimal finalAmount = totalAmount.add(shippingFee).subtract(discountAmount);
+        
+        // --- Xử lý Loyalty Points ---
+        Integer pointsToUse = req.getPointsToUse() != null ? req.getPointsToUse() : 0;
+        BigDecimal pointsDiscount = BigDecimal.ZERO;
+        if (pointsToUse > 0) {
+            if (customer.getLoyaltyPoints() == null || customer.getLoyaltyPoints() < pointsToUse) {
+                throw new BusinessException("INSUFFICIENT_POINTS", "Điểm tích lũy không đủ.");
+            }
+            if (pointsToUse % 500 != 0) {
+                throw new BusinessException("INVALID_POINTS", "Số điểm quy đổi phải là bội số của 500.");
+            }
+            // 1 điểm = 100 VND (đồng bộ với POSService và Config)
+            pointsDiscount = BigDecimal.valueOf(pointsToUse).multiply(BigDecimal.valueOf(100));
+            customer.deductPoints(pointsToUse);
+            customerRepository.save(customer);
+        }
+
+        BigDecimal finalAmount = totalAmount.add(shippingFee).subtract(discountAmount).subtract(pointsDiscount);
+        if (finalAmount.compareTo(BigDecimal.ZERO) < 0) {
+            finalAmount = BigDecimal.ZERO;
+        }
 
         UUID assignedWarehouseId = null;
         Map<String, Object> chosenPlan = null;

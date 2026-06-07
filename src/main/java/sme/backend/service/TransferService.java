@@ -1,4 +1,4 @@
-package sme.backend.service;
+ package sme.backend.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,6 +28,7 @@ public class TransferService {
     private final ProductRepository productRepository;
     private final NotificationService notificationService;
     private final OrderRepository orderRepository; 
+    private final UserRepository userRepository;
 
     @Transactional
     public InternalTransfer createTransfer(UUID fromWarehouseId, UUID toWarehouseId,
@@ -112,6 +113,12 @@ public class TransferService {
             throw new BusinessException("INVALID_STATUS", "Chỉ có thể xuất kho phiếu ở trạng thái DRAFT");
         }
 
+        User user = userRepository.findById(dispatchedBy)
+                .orElseThrow(() -> new ResourceNotFoundException("User", dispatchedBy));
+        if (user.getRole() == User.UserRole.ROLE_MANAGER && !transfer.getFromWarehouseId().equals(user.getWarehouseId())) {
+            throw new BusinessException("FORBIDDEN", "Bạn không có quyền xuất kho này");
+        }
+
         boolean isAutoTransfer = transfer.getReferenceOrderId() != null;
 
         for (TransferItem item : transfer.getItems()) {
@@ -155,6 +162,12 @@ public class TransferService {
 
         if (transfer.getStatus() != InternalTransfer.TransferStatus.DISPATCHED) {
             throw new BusinessException("INVALID_STATUS", "Chỉ có thể nhận hàng phiếu ở trạng thái DISPATCHED");
+        }
+
+        User user = userRepository.findById(receivedBy)
+                .orElseThrow(() -> new ResourceNotFoundException("User", receivedBy));
+        if (user.getRole() == User.UserRole.ROLE_MANAGER && !transfer.getToWarehouseId().equals(user.getWarehouseId())) {
+            throw new BusinessException("FORBIDDEN", "Bạn không có quyền nhận hàng cho kho này");
         }
 
         boolean isAutoTransfer = transfer.getReferenceOrderId() != null;

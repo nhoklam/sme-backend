@@ -14,6 +14,7 @@ import sme.backend.repository.UserRepository;
 import sme.backend.security.UserPrincipal;
 import sme.backend.security.oauth2.user.OAuth2UserInfo;
 import sme.backend.security.oauth2.user.OAuth2UserInfoFactory;
+import sme.backend.repository.CustomerRepository;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -23,6 +24,7 @@ import java.util.UUID;
 public class CustomOAuth2UserService extends DefaultOAuth2UserService {
 
     private final UserRepository userRepository;
+    private final CustomerRepository customerRepository;
     private final PasswordEncoder passwordEncoder;
 
     @Override
@@ -89,7 +91,26 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
         user.setRole(User.UserRole.ROLE_CUSTOMER); // Default to customer
         user.setPasswordHash(passwordEncoder.encode(UUID.randomUUID().toString())); // Random password for OAuth2 users
 
-        return userRepository.save(user);
+        user = userRepository.save(user);
+
+        // Tạo luôn Customer profile cho Oauth2 user
+        String dummyPhone = "G-" + user.getProviderId();
+        if (dummyPhone.length() > 20) {
+            dummyPhone = dummyPhone.substring(0, 20);
+        }
+
+        sme.backend.entity.Customer customer = sme.backend.entity.Customer.builder()
+                .userId(user.getId())
+                .fullName(user.getFullName())
+                .email(user.getEmail())
+                .phoneNumber(dummyPhone) // Số ĐT tạm thời vì Google ko trả về số ĐT
+                .acquisitionChannel(sme.backend.entity.Customer.AcquisitionChannel.ONLINE)
+                .isActive(true)
+                .avatarUrl(user.getAvatarUrl())
+                .build();
+        customerRepository.save(customer);
+
+        return user;
     }
 
     private User updateExistingUser(User existingUser, OAuth2UserInfo oAuth2UserInfo) {
@@ -98,6 +119,29 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
             existingUser.setAvatarUrl(oAuth2UserInfo.getImageUrl());
             updated = true;
         }
+        
+        // Đảm bảo Customer profile tồn tại (fix lỗi user cũ đã có User nhưng chưa có Customer)
+        if (existingUser.getRole() == User.UserRole.ROLE_CUSTOMER) {
+            java.util.Optional<sme.backend.entity.Customer> customerOpt = customerRepository.findByUserId(existingUser.getId());
+            if (customerOpt.isEmpty()) {
+                String dummyPhone = "G-" + existingUser.getProviderId();
+                if (dummyPhone.length() > 20) {
+                    dummyPhone = dummyPhone.substring(0, 20);
+                }
+                
+                sme.backend.entity.Customer newCustomer = sme.backend.entity.Customer.builder()
+                        .userId(existingUser.getId())
+                        .fullName(existingUser.getFullName())
+                        .email(existingUser.getEmail())
+                        .phoneNumber(dummyPhone) // Số ĐT tạm thời
+                        .acquisitionChannel(sme.backend.entity.Customer.AcquisitionChannel.ONLINE)
+                        .isActive(true)
+                        .avatarUrl(existingUser.getAvatarUrl())
+                        .build();
+                customerRepository.save(newCustomer);
+            }
+        }
+
         if (updated) {
             return userRepository.save(existingUser);
         }

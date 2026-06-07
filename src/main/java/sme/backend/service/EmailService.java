@@ -84,8 +84,10 @@ public class EmailService {
 
     @Async
     public void sendForgotPasswordEmail(String toEmail, String otp) {
+        log.info("Bắt đầu tiến trình gửi OTP đến email: {}", toEmail);
+        
         if (senderEmail == null || senderEmail.isBlank() || toEmail == null || toEmail.isBlank()) {
-            log.warn("Không thể gửi email vì thiếu địa chỉ người gửi hoặc người nhận.");
+            log.warn("Không thể gửi email vì thiếu địa chỉ người gửi hoặc người nhận. senderEmail='{}', toEmail='{}'", senderEmail, toEmail);
             return;
         }
 

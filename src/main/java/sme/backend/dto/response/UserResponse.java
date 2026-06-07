@@ -18,6 +18,7 @@ public class UserResponse {
     private UUID warehouseId;
     private String warehouseName;
     private Boolean isActive;
+    private Boolean isLocked;
     private Instant createdAt;
     private String posSettings;
     @JsonInclude(JsonInclude.Include.NON_NULL)

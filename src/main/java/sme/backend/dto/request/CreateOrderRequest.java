@@ -26,7 +26,9 @@ public class CreateOrderRequest {
     @NotBlank private String paymentMethod;
     private String type;     // DELIVERY (default) | BOPIS
     private String note;
-    // Thêm shippingFee và discount
+    
+    // Thêm shippingFee, discount và pointsToUse
+    private Integer pointsToUse;
     private BigDecimal shippingFee;
     private BigDecimal discountAmount;
     private List<String> couponCodes;

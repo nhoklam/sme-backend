@@ -130,7 +130,7 @@ public class RedisTokenService {
         return 60;
     }
 
-    public void recordFailedAttempt(String username) {
+    public int recordFailedAttempt(String username) {
         try {
             String attemptKey = KEY_LOGIN_ATTEMPTS_USERNAME + username;
             Long attempts = redisTemplate.opsForValue().increment(attemptKey);
@@ -147,9 +147,11 @@ public class RedisTokenService {
                 redisTemplate.opsForValue().set(lockoutKey, "LOCKED", lockoutMinutes, TimeUnit.MINUTES);
                 log.warn("Account {} locked for {} minutes due to {} failed attempts.", username, lockoutMinutes, attempts);
             }
+            return attempts != null ? attempts.intValue() : 0;
         } catch (Exception e) {
             log.warn("Redis down while recording failed attempt for {}: {}", username, e.getMessage());
             // Fail Open: Không throw exception
+            return 0;
         }
     }
 

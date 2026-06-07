@@ -99,11 +99,20 @@ public class AuthService {
             authentication = authenticationManager.authenticate(
                     new UsernamePasswordAuthenticationToken(req.getUsername(), req.getPassword()));
         } catch (org.springframework.security.core.AuthenticationException e) {
-            redisTokenService.recordFailedAttempt(req.getUsername());
+            int attempts = redisTokenService.recordFailedAttempt(req.getUsername());
             if (securityAuditService != null) {
                 securityAuditService.logLoginFailed(req.getUsername(), ip, userAgent, "Invalid credentials");
             }
-            throw e;
+            if (attempts > 0) {
+                int remaining = (RedisTokenService.MAX_FAILED_ATTEMPTS - (attempts % RedisTokenService.MAX_FAILED_ATTEMPTS)) % RedisTokenService.MAX_FAILED_ATTEMPTS;
+                if (remaining == 0) remaining = RedisTokenService.MAX_FAILED_ATTEMPTS; // It just got locked, the lockout block will catch it next time, but for the immediate response say 0? No, if it's locked it will be 0.
+                if (attempts % RedisTokenService.MAX_FAILED_ATTEMPTS == 0) {
+                    throw new BusinessException("ACCOUNT_LOCKED", "Tài khoản của bạn đã bị khóa tạm thời do đăng nhập sai nhiều lần. Vui lòng thử lại sau.");
+                } else {
+                    throw new BusinessException("BAD_CREDENTIALS", "Tên đăng nhập hoặc mật khẩu không đúng. Bạn còn " + remaining + " lần thử trước khi bị khóa.");
+                }
+            }
+            throw new BusinessException("BAD_CREDENTIALS", "Tên đăng nhập hoặc mật khẩu không đúng.");
         }
 
         redisTokenService.clearFailedAttempts(req.getUsername());
@@ -163,11 +172,19 @@ public class AuthService {
             authentication = authenticationManager.authenticate(
                     new UsernamePasswordAuthenticationToken(req.getUsername(), req.getPassword()));
         } catch (org.springframework.security.core.AuthenticationException e) {
-            redisTokenService.recordFailedAttempt(req.getUsername());
+            int attempts = redisTokenService.recordFailedAttempt(req.getUsername());
             if (securityAuditService != null) {
                 securityAuditService.logLoginFailed(req.getUsername(), ip, userAgent, "Invalid credentials");
             }
-            throw e;
+            if (attempts > 0) {
+                int remaining = (RedisTokenService.MAX_FAILED_ATTEMPTS - (attempts % RedisTokenService.MAX_FAILED_ATTEMPTS)) % RedisTokenService.MAX_FAILED_ATTEMPTS;
+                if (attempts % RedisTokenService.MAX_FAILED_ATTEMPTS == 0) {
+                    throw new BusinessException("ACCOUNT_LOCKED", "Tài khoản của bạn đã bị khóa tạm thời do đăng nhập sai nhiều lần. Vui lòng thử lại sau.");
+                } else {
+                    throw new BusinessException("BAD_CREDENTIALS", "Tên đăng nhập hoặc mật khẩu không đúng. Bạn còn " + remaining + " lần thử trước khi bị khóa.");
+                }
+            }
+            throw new BusinessException("BAD_CREDENTIALS", "Tên đăng nhập hoặc mật khẩu không đúng.");
         }
 
         redisTokenService.clearFailedAttempts(req.getUsername());
@@ -210,6 +227,11 @@ public class AuthService {
         if (!jwtTokenProvider.validateToken(refreshToken)) {
             throw new BusinessException("INVALID_TOKEN", "Refresh token không hợp lệ hoặc đã hết hạn");
         }
+        String jti = jwtTokenProvider.getJtiFromToken(refreshToken);
+        if (redisTokenService.isJtiBlacklisted(jti)) {
+            throw new BusinessException("INVALID_TOKEN", "Refresh token đã bị vô hiệu hóa (logged out)");
+        }
+        
         String username = jwtTokenProvider.getUsernameFromToken(refreshToken);
 
         User user = userRepository.findByUsernameAndIsActiveTrue(username)
@@ -290,12 +312,7 @@ public class AuthService {
             }
         }
 
-        // Admin không bán hàng, không cần check ca
-        // (Nếu sau này mở rộng Role_Manager switch branch thì mới check)
-        if (principal.getRole() != User.UserRole.ROLE_ADMIN && shiftRepository.existsByCashierIdAndStatus(principal.getId(), sme.backend.entity.Shift.ShiftStatus.OPEN)) {
-            throw new BusinessException("HAS_OPEN_SHIFT",
-                    "Vui lòng đóng ca làm việc hiện tại trước khi chuyển chi nhánh");
-        }
+
 
         User user = userRepository.findById(principal.getId())
                 .orElseThrow(() -> new ResourceNotFoundException("User", principal.getId()));
@@ -509,7 +526,7 @@ public class AuthService {
         }
 
         // Generate 6-digit OTP
-        String otp = String.format("%06d", new java.util.Random().nextInt(999999));
+        String otp = String.format("%06d", new java.security.SecureRandom().nextInt(1000000));
         
         redisTokenService.saveOtp(email, otp);
         emailService.sendForgotPasswordEmail(email, otp);
@@ -532,26 +549,49 @@ public class AuthService {
         }
     }
 
-    public void logout(String token) {
-        if (token == null || token.isBlank()) return;
+    public void logout(String accessToken, String refreshToken) {
+        String username = null;
         
-        try {
-            if (jwtTokenProvider.validateToken(token)) {
-                String jti = jwtTokenProvider.getJtiFromToken(token);
-                java.util.Date expiration = jwtTokenProvider.getExpirationFromToken(token);
-                
-                long remainingTimeMs = expiration.getTime() - System.currentTimeMillis();
-                if (remainingTimeMs > 0) {
-                    redisTokenService.blacklistJti(jti, remainingTimeMs);
+        // Blacklist Access Token
+        if (accessToken != null && !accessToken.isBlank()) {
+            try {
+                if (jwtTokenProvider.validateToken(accessToken)) {
+                    String jti = jwtTokenProvider.getJtiFromToken(accessToken);
+                    java.util.Date expiration = jwtTokenProvider.getExpirationFromToken(accessToken);
+                    
+                    long remainingTimeMs = expiration.getTime() - System.currentTimeMillis();
+                    if (remainingTimeMs > 0) {
+                        redisTokenService.blacklistJti(jti, remainingTimeMs);
+                    }
+                    username = jwtTokenProvider.getUsernameFromToken(accessToken);
                 }
-                
-                String username = jwtTokenProvider.getUsernameFromToken(token);
-                if (securityAuditService != null) {
-                    securityAuditService.logEvent(username, "LOGOUT", getClientIp(), getUserAgent(), "User logged out successfully");
-                }
+            } catch (Exception e) {
+                log.warn("Error processing access token during logout: {}", e.getMessage());
             }
-        } catch (Exception e) {
-            log.warn("Error processing logout: {}", e.getMessage());
+        }
+        
+        // Blacklist Refresh Token
+        if (refreshToken != null && !refreshToken.isBlank()) {
+            try {
+                if (jwtTokenProvider.validateToken(refreshToken)) {
+                    String jti = jwtTokenProvider.getJtiFromToken(refreshToken);
+                    java.util.Date expiration = jwtTokenProvider.getExpirationFromToken(refreshToken);
+                    
+                    long remainingTimeMs = expiration.getTime() - System.currentTimeMillis();
+                    if (remainingTimeMs > 0) {
+                        redisTokenService.blacklistJti(jti, remainingTimeMs);
+                    }
+                    if (username == null) {
+                        username = jwtTokenProvider.getUsernameFromToken(refreshToken);
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("Error processing refresh token during logout: {}", e.getMessage());
+            }
+        }
+
+        if (username != null && securityAuditService != null) {
+            securityAuditService.logEvent(username, "LOGOUT", getClientIp(), getUserAgent(), "User logged out successfully");
         }
     }
 
@@ -578,6 +618,12 @@ public class AuthService {
                 .build();
     }
 
+    public UserResponse getUserResponseById(UUID id) {
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("User", id));
+        return mapToResponse(user);
+    }
+
     public UserResponse mapToResponse(User user) {
         String warehouseName = null;
         if (user.getWarehouseId() != null) {
@@ -595,6 +641,7 @@ public class AuthService {
                 .warehouseId(user.getWarehouseId())
                 .warehouseName(warehouseName)
                 .isActive(user.getIsActive())
+                .isLocked(redisTokenService.isLockedOut(user.getUsername()))
                 .createdAt(user.getCreatedAt())
                 .lastLoginAt(user.getLastLoginAt())
                 .posSettings(user.getPosSettings())

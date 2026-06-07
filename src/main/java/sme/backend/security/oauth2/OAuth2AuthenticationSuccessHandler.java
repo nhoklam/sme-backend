@@ -47,11 +47,35 @@ public class OAuth2AuthenticationSuccessHandler extends SimpleUrlAuthenticationS
     @Override
     protected String determineTargetUrl(HttpServletRequest request, HttpServletResponse response, Authentication authentication) {
         String redirectUri = CookieUtils.getCookie(request, HttpCookieOAuth2AuthorizationRequestRepository.REDIRECT_URI_PARAM_COOKIE_NAME)
-                .map(cookie -> cookie.getValue())
-                .orElse(getDefaultTargetUrl());
+                .map(cookie -> {
+                    String val = cookie.getValue();
+                    // Fix for mutated cookies from deleteCookie
+                    if (val == null || val.trim().isEmpty()) {
+                        return authorizedRedirectUris[0];
+                    }
+                    return val;
+                })
+                .orElse(authorizedRedirectUris[0]);
 
-        // Validate redirect_uri if needed... For now, we trust it or validate against authorizedRedirectUris
+        // Validate redirect_uri
+        boolean isAuthorized = false;
+        for (String authorizedRedirectUri : authorizedRedirectUris) {
+            // Check host and port
+            java.net.URI authorizedURI = java.net.URI.create(authorizedRedirectUri);
+            java.net.URI clientRedirectUri = java.net.URI.create(redirectUri);
 
+            if(authorizedURI.getHost().equalsIgnoreCase(clientRedirectUri.getHost())
+                    && authorizedURI.getPort() == clientRedirectUri.getPort()) {
+                isAuthorized = true;
+                break;
+            }
+        }
+
+        if(!isAuthorized) {
+            throw new org.springframework.security.oauth2.core.OAuth2AuthenticationException(
+                    new org.springframework.security.oauth2.core.OAuth2Error("invalid_redirect_uri"),
+                    "Sorry! We've got an Unauthorized Redirect URI and can't proceed with the authentication");
+        }
         UserPrincipal userPrincipal = (UserPrincipal) authentication.getPrincipal();
         String jwtToken = tokenProvider.generateAccessToken(userPrincipal);
         

@@ -21,8 +21,14 @@ public class OAuth2AuthenticationFailureHandler extends SimpleUrlAuthenticationF
     @Override
     public void onAuthenticationFailure(HttpServletRequest request, HttpServletResponse response, AuthenticationException exception) throws IOException, ServletException {
         String targetUrl = CookieUtils.getCookie(request, HttpCookieOAuth2AuthorizationRequestRepository.REDIRECT_URI_PARAM_COOKIE_NAME)
-                .map(cookie -> cookie.getValue())
-                .orElse(("/"));
+                .map(cookie -> {
+                    String val = cookie.getValue();
+                    if (val == null || val.trim().isEmpty()) {
+                        return "http://localhost:3000/oauth2/redirect";
+                    }
+                    return val;
+                })
+                .orElse("http://localhost:3000/oauth2/redirect");
 
         targetUrl = UriComponentsBuilder.fromUriString(targetUrl)
                 .queryParam("error", exception.getLocalizedMessage())
