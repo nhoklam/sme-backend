@@ -94,6 +94,17 @@ public class RedisTokenService {
         }
     }
 
+    public boolean validateOtpWithoutRemoving(String email, String rawOtp) {
+        try {
+            String hashedOtp = hashOtp(rawOtp, email);
+            String storedHash = redisTemplate.opsForValue().get(KEY_FORGOT_PWD_OTP + email);
+            return storedHash != null && storedHash.equals(hashedOtp);
+        } catch (Exception e) {
+            log.warn("Redis down or error while verifying OTP for email {}: {}", email, e.getMessage());
+            throw new RuntimeException("Service Unavailable: Could not verify OTP due to Redis issue");
+        }
+    }
+
     // --- Rate Limit Operations ---
     public boolean checkAndIncrementRateLimit(String email, String ip) {
         try {

@@ -132,10 +132,10 @@ websocket:
 # EMAIL (Spring Mail)
 # ========================
 spring.mail:
-  host: smtp.gmail.com
-  port: 587
-  username: ${MAIL_USERNAME:}
-  password: ${MAIL_PASSWORD:}
+  host: ${SPRING_MAIL_HOST:smtp.gmail.com}
+  port: ${SPRING_MAIL_PORT:587}
+  username: ${MAIL_USERNAME:thienquynhfff@gmail.com}
+  password: ${MAIL_PASSWORD:rqxzjrockabeybrf}
   properties:
     mail:
       smtp:

@@ -50,7 +50,7 @@ public class CustomerAiService {
             return chatClient.prompt()
                     .system(systemPrompt)
                     .messages(messages)
-                    .call()
+                    .call()     
                     .content();
         } catch (Exception e) {
             log.error("Customer AI chat error: {}", e.getMessage(), e);

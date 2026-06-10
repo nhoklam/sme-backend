@@ -8,6 +8,8 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 import sme.backend.entity.Customer;
 
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -41,4 +43,38 @@ public interface CustomerRepository extends JpaRepository<Customer, UUID> {
         ORDER BY c.totalSpent DESC
         """)
     Page<Customer> findTopCustomers(Pageable pageable);
+
+    @Query(value = """
+        SELECT c.full_name as fullName, 
+               CAST(COALESCE(SUM(combined.order_count), 0) AS INTEGER) as totalOrders, 
+               CAST(COALESCE(SUM(combined.revenue), 0) AS NUMERIC) as totalPurchase
+        FROM customers c
+        JOIN (
+            SELECT customer_id, 1 AS order_count, final_amount AS revenue
+            FROM invoices
+            WHERE created_at BETWEEN :fromDate AND :toDate
+              AND type = 'SALE'
+              AND customer_id IS NOT NULL
+              AND (CAST(:warehouseId AS VARCHAR) IS NULL OR CAST(warehouse_id AS VARCHAR) = CAST(:warehouseId AS VARCHAR))
+            UNION ALL
+            SELECT customer_id, 1 AS order_count, final_amount AS revenue
+            FROM orders
+            WHERE created_at BETWEEN :fromDate AND :toDate
+              AND status = 'DELIVERED'
+              AND customer_id IS NOT NULL
+              AND (CAST(:warehouseId AS VARCHAR) IS NULL OR CAST(assigned_warehouse_id AS VARCHAR) = CAST(:warehouseId AS VARCHAR))
+        ) combined ON c.id = combined.customer_id
+        WHERE c.is_active = true
+        GROUP BY c.id, c.full_name
+        ORDER BY 
+            CASE WHEN :metric = 'orders' THEN CAST(COALESCE(SUM(combined.order_count), 0) AS NUMERIC)
+                 ELSE CAST(COALESCE(SUM(combined.revenue), 0) AS NUMERIC) END DESC
+        LIMIT :limit
+        """, nativeQuery = true)
+    List<Map<String, Object>> findTopCustomersByTimeRange(
+            @Param("warehouseId") UUID warehouseId,
+            @Param("fromDate") java.time.Instant fromDate,
+            @Param("toDate") java.time.Instant toDate,
+            @Param("metric") String metric,
+            @Param("limit") int limit);
 }

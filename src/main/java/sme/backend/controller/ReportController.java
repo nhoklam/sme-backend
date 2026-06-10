@@ -10,6 +10,7 @@ import sme.backend.entity.User;
 import sme.backend.repository.InventoryRepository;
 import sme.backend.repository.InvoiceRepository;
 import sme.backend.repository.ProductRepository;
+import sme.backend.repository.CustomerRepository;
 import sme.backend.security.UserPrincipal;
 
 import java.time.Instant;
@@ -25,6 +26,7 @@ public class ReportController {
     private final InvoiceRepository invoiceRepository;
     private final InventoryRepository inventoryRepository;
     private final ProductRepository productRepository;
+    private final CustomerRepository customerRepository;
 
     // Hàm tiện ích để đảm bảo Manager luôn chỉ truy cập được kho của họ
     private UUID getEffectiveWarehouseId(UserPrincipal principal, UUID requestedWarehouseId) {
@@ -100,6 +102,22 @@ public class ReportController {
 
         return ResponseEntity.ok(ApiResponse.ok(
                 productRepository.findTopSellingProducts(wid, from, to, limit, paymentMethod)));
+    }
+
+    @GetMapping("/top-customers")
+    @PreAuthorize("hasAnyRole('MANAGER','ADMIN')")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getTopCustomers(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @RequestParam(required = false) UUID warehouseId,
+            @RequestParam Instant from,
+            @RequestParam Instant to,
+            @RequestParam(defaultValue = "revenue") String metric,
+            @RequestParam(defaultValue = "10") int limit) {
+
+        UUID wid = getEffectiveWarehouseId(principal, warehouseId);
+
+        return ResponseEntity.ok(ApiResponse.ok(
+                customerRepository.findTopCustomersByTimeRange(wid, from, to, metric, limit)));
     }
 
     @GetMapping("/summary")

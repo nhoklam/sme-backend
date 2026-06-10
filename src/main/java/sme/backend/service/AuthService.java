@@ -352,6 +352,12 @@ public class AuthService {
         if (userRepository.existsByUsername(req.getPhone())) {
             throw new BusinessException("DUPLICATE_PHONE", "Số điện thoại đã được đăng ký tài khoản");
         }
+        
+        if (req.getEmail() != null && !req.getEmail().isBlank()) {
+            if (userRepository.existsByEmail(req.getEmail())) {
+                throw new BusinessException("DUPLICATE_EMAIL", "Email này đã được sử dụng cho một tài khoản khác");
+            }
+        }
 
         // Tạo User account cho Customer
         User user = User.builder()
@@ -537,6 +543,12 @@ public class AuthService {
         
         redisTokenService.saveOtp(email, otp);
         emailService.sendForgotPasswordEmail(email, otp);
+    }
+
+    public void verifyOtp(String email, String otp) {
+        if (!redisTokenService.validateOtpWithoutRemoving(email, otp)) {
+            throw new BusinessException("INVALID_OTP", "Mã OTP không hợp lệ hoặc đã hết hạn");
+        }
     }
 
     @Transactional

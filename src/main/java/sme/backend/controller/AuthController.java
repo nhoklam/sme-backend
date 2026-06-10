@@ -141,6 +141,19 @@ public class AuthController {
         return ResponseEntity.ok(ApiResponse.ok("Mã OTP đã được gửi đến email", null));
     }
 
+    /** POST /auth/verify-otp */
+    @PostMapping("/verify-otp")
+    public ResponseEntity<ApiResponse<Void>> verifyOtp(
+            @RequestBody Map<String, String> body) {
+        String email = body.get("email");
+        String otp = body.get("otp");
+        if (email == null || email.isBlank() || otp == null || otp.isBlank()) {
+            throw new BusinessException("INVALID_REQUEST", "Email và mã OTP là bắt buộc");
+        }
+        authService.verifyOtp(email, otp);
+        return ResponseEntity.ok(ApiResponse.ok("Mã OTP hợp lệ", null));
+    }
+
     /** POST /auth/reset-password */
     @PostMapping("/reset-password")
     public ResponseEntity<ApiResponse<Void>> resetPassword(
